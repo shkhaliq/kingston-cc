@@ -375,7 +375,7 @@ function renderPlayerForm(p) {
   if (!state.accounts) {
     login = '<p class="muted">Logins can’t be managed right now because the manage-logins function isn’t reachable.</p>';
   } else if (!p) {
-    login = `<p class="muted">Optional. Fill these in to give them a login now, then send them their email and passcode.</p>
+    login = `<p class="muted">Optional. Fill these in to give them a login now, then send them their email and passcode. If the email already has a login, such as an admin’s, it’s linked as it is and the passcode is left alone.</p>
       <div class="grid">
         <label>Email <input name="email" type="email" autocomplete="off"></label>
         ${passcodeField("passcode")}
@@ -651,7 +651,7 @@ const handlers = {
     };
     const email = values.get("email")?.trim();
     const passcode = values.get("passcode") ?? "";
-    if (email && passcode.length < 6) throw new Error("Give the login a passcode of at least 6 characters, or leave the email empty.");
+    if (email && passcode && passcode.length < 6) throw new Error("Passcodes need at least 6 characters.");
 
     let id = form.dataset.id;
     if (id) {
@@ -671,8 +671,10 @@ const handlers = {
     let message = `${row.name} saved.`;
     if (email) {
       try {
-        await callLogins({ action: "create", player_id: id, email, passcode });
-        message = `${row.name} added. They sign in with ${email} and the passcode ${passcode}.`;
+        const result = await callLogins({ action: "create", player_id: id, email, passcode });
+        message = result.linked
+          ? `${row.name} added and linked to the existing login for ${email}. The passcode hasn’t changed.`
+          : `${row.name} added. They sign in with ${email} and the passcode ${passcode}.`;
       } catch (error) {
         location.hash = `#/edit-player/${encodeURIComponent(id)}`;
         await refresh();
@@ -694,8 +696,10 @@ const handlers = {
     const section = button.closest("section");
     const email = section.querySelector("[name=new_email]").value.trim();
     const passcode = section.querySelector("[name=new_login_passcode]").value;
-    await callLogins({ action: "create", player_id: button.dataset.player, email, passcode });
-    await refresh(`Login created. ${player(button.dataset.player)?.name} signs in with ${email} and the passcode ${passcode}.`);
+    const result = await callLogins({ action: "create", player_id: button.dataset.player, email, passcode });
+    await refresh(result.linked
+      ? `Linked to the existing login for ${email}. The passcode hasn’t changed.`
+      : `Login created. ${player(button.dataset.player)?.name} signs in with ${email} and the passcode ${passcode}.`);
   },
   async "reset-passcode"(button) {
     const passcode = button.closest("section").querySelector("[name=new_passcode]").value;
