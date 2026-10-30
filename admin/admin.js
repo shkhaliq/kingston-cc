@@ -339,6 +339,8 @@ function sidePicker(f, groups) {
 const ROLES = { batter: "Batter", bowler: "Bowler", all_rounder: "All-rounder", wicket_keeper: "Wicket-keeper" };
 
 const account = (playerID) => state.accounts?.find((a) => a.player_id === playerID);
+const loginOf = (playerID) => state.logins.find((l) => l.player_id === playerID)?.user_id;
+const isAdmin = (playerID) => state.admins.some((a) => a.user_id === loginOf(playerID));
 
 function loginTag(p) {
   if (!state.accounts) return state.logins.some((l) => l.player_id === p.id) ? '<span class="tag">Has login</span>' : '<span class="tag">No login</span>';
@@ -352,7 +354,7 @@ function renderSquad() {
     .sort((a, b) => a.name.localeCompare(b.name));
   const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
   const row = (p, extra = "") => `<li>
-      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}<br>
+      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}<br>
         <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
       ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
   const where = state.league === "all" ? "the club" : esc(league(state.league)?.name);
@@ -392,7 +394,8 @@ function renderPlayerForm(p) {
           ? `<button type="button" data-action="enable-login" data-player="${esc(p.id)}">Turn login back on</button>`
           : `<button type="button" class="danger" data-action="disable-login" data-player="${esc(p.id)}">Turn login off</button>`}
       </div>
-      <p class="muted">Turning a login off stops it signing in but keeps the record of their replies.</p>`;
+      <p class="muted">Turning a login off stops it signing in but keeps the record of their replies.</p>
+      ${adminControls(p)}`;
   } else {
     login = `<p class="muted">No login yet.</p>
       <div class="grid">
@@ -427,6 +430,19 @@ function renderPlayerForm(p) {
     </form>
   </section>
   ${p ? `<section><h2>Login</h2>${login}</section>` : ""}`;
+}
+
+/** Owners are admins: they can use this page. An admin can't remove themselves. */
+function adminControls(p) {
+  const userID = loginOf(p.id);
+  if (!userID) return "";
+  if (!isAdmin(p.id)) {
+    return `<h3>Club admin</h3><p class="muted">Admins can use this page to change anything: games, sides, results, players and logins.</p>
+      <div class="actions"><button type="button" data-action="make-admin" data-player="${esc(p.id)}">Make admin</button></div>`;
+  }
+  if (userID === state.session.user.id) return '<h3>Club admin</h3><p class="muted">You’re a club admin.</p>';
+  return `<h3>Club admin</h3><p>${esc(p.name)} is a club admin.</p>
+    <div class="actions"><button type="button" class="danger" data-action="remove-admin" data-player="${esc(p.id)}">Remove as admin</button></div>`;
 }
 
 /** A passcode box with a button that fills in a random one, shown in full so it can be passed on. */
@@ -977,6 +993,18 @@ const handlers = {
     if (!confirm(`Turn off ${player(button.dataset.player)?.name}’s login? They won’t be able to sign in until it’s turned back on.`)) return;
     await callLogins({ action: "disable", player_id: button.dataset.player });
     await refresh("Login turned off.");
+  },
+  async "make-admin"(button) {
+    const p = player(button.dataset.player);
+    if (!confirm(`Make ${p.name} a club admin? They’ll be able to change anything on this page.`)) return;
+    await must(db.from("admins").insert({ user_id: loginOf(p.id), name: p.name }));
+    await refresh(`${p.name} is now a club admin. They sign in here with their app login.`);
+  },
+  async "remove-admin"(button) {
+    const p = player(button.dataset.player);
+    if (!confirm(`Remove ${p.name} as a club admin? Their app login keeps working.`)) return;
+    await must(db.from("admins").delete().eq("user_id", loginOf(p.id)));
+    await refresh(`${p.name} is no longer a club admin.`);
   },
   async "enable-login"(button) {
     await callLogins({ action: "enable", player_id: button.dataset.player });
