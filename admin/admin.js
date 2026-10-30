@@ -280,7 +280,9 @@ function renderFixture(id) {
       <ul class="list">${squad.map((p) => replyRow(f, p)).join("")}</ul>
     </section>
 
-    ${sidePicker(f, groups)}`;
+    ${sidePicker(f, groups)}
+
+    ${resultSection(f)}`;
 }
 
 function replyRow(f, p) {
@@ -445,6 +447,83 @@ function newPlayerID(name) {
   let id = base;
   for (let n = 2; player(id); n += 1) id = `${base}-${n}`;
   return id;
+}
+
+// Results and scorecards ------------------------------------------------------------------------------------
+
+const OUTCOMES = { won: "Won", lost: "Lost", tied: "Tied", no_result: "No result" };
+
+/** "3.2" overs as 20 balls. Empty means didn't bowl. */
+function ballsFromOvers(text) {
+  const value = text.trim();
+  if (!value) return 0;
+  const match = value.match(/^(\d+)(?:\.(\d))?$/);
+  if (!match || Number(match[2] ?? 0) > 5) throw new Error(`“${value}” isn’t a number of overs. Use whole overs and balls, like 3.2.`);
+  return Number(match[1]) * 6 + Number(match[2] ?? 0);
+}
+
+const oversFromBalls = (balls) => (balls ? `${Math.floor(balls / 6)}${balls % 6 ? `.${balls % 6}` : ""}` : "");
+
+function scoreRow(f, playerID, perf, played) {
+  const p = player(playerID);
+  const field = (name, value, label, attributes = 'inputmode="numeric"') =>
+    `<td><input class="num" name="${name}__${esc(playerID)}" value="${esc(value)}" ${attributes} aria-label="${label} for ${esc(p?.name)}"></td>`;
+  return `<tr data-player="${esc(playerID)}">
+    <td><label style="display:flex;gap:8px;align-items:center;font-weight:600"><input type="checkbox" name="played__${esc(playerID)}" ${played ? "checked" : ""}> ${esc(p?.name ?? playerID)}</label></td>
+    ${field("runs", perf?.runs ?? "", "Runs")}
+    ${field("balls", perf?.balls_faced || "", "Balls faced")}
+    <td><input type="checkbox" name="out__${esc(playerID)}" ${perf?.is_out ? "checked" : ""} aria-label="${esc(p?.name)} was out"></td>
+    ${field("overs", oversFromBalls(perf?.balls_bowled), "Overs bowled", 'inputmode="decimal"')}
+    ${field("conceded", perf?.runs_conceded || "", "Runs conceded")}
+    ${field("wickets", perf?.wickets || "", "Wickets")}
+    ${field("catches", perf?.catches || "", "Catches")}
+  </tr>`;
+}
+
+function resultSection(f) {
+  const started = new Date(f.start) <= new Date();
+  if (!started && !f.outcome) return '<section><h2>Result</h2><p class="muted">The result and scorecard can be added once the game has started.</p></section>';
+  if (f.status !== "scheduled") return "";
+
+  // The picked side in batting order, then anyone else who has figures.
+  const ids = [...f.squad, ...f.performances.map((x) => x.player_id).filter((id) => !f.squad.includes(id))];
+  const perfOf = (id) => f.performances.find((x) => x.player_id === id);
+  const hasCard = f.performances.length > 0;
+  const others = [...squadOf(f.league_id)].filter((id) => !ids.includes(id)).map(player).filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return `<section>
+    <h2>Result and scorecard</h2>
+    <form data-action="save-result" data-fixture="${esc(f.id)}">
+      <div class="grid">
+        <label>Result <select name="outcome" required>
+          <option value="">Choose…</option>
+          ${Object.entries(OUTCOMES).map(([value, label]) => `<option value="${value}" ${f.outcome === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select></label>
+        <label>Kingston score <input name="kingston_score" placeholder="148/6 (20)" value="${esc(f.kingston_score)}"></label>
+        <label>${esc(f.opponent)} score <input name="opposition_score" placeholder="131/9 (20)" value="${esc(f.opposition_score)}"></label>
+        <label>Player of the match <select name="player_of_the_match">
+          <option value="">None</option>
+          ${ids.map(player).filter(Boolean).map((p) => `<option value="${esc(p.id)}" ${f.player_of_the_match === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+        </select></label>
+      </div>
+      <label>Summary <span class="hint">A line or two for the app, optional</span><textarea name="summary" rows="2">${esc(f.summary)}</textarea></label>
+
+      <h3>Scorecard</h3>
+      <p class="muted">Tick everyone who played. Leave runs empty for anyone who didn’t bat, and overs empty for anyone who didn’t bowl.</p>
+      <div class="table-wrap"><table class="scorecard">
+        <thead><tr><th>Played</th><th class="num">Runs</th><th class="num">Balls</th><th>Out</th><th class="num">Overs</th><th class="num">Runs given</th><th class="num">Wkts</th><th class="num">Catches</th></tr></thead>
+        <tbody>${ids.map((id) => scoreRow(f, id, perfOf(id), hasCard ? Boolean(perfOf(id)) : true)).join("")}</tbody>
+      </table></div>
+      ${others.length ? `<label style="max-width:320px">Add someone else who played <select data-action="add-score-row" data-fixture="${esc(f.id)}">
+        <option value="">Choose a player…</option>${others.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}
+      </select></label>` : ""}
+      <div class="actions">
+        <button class="primary">Save result</button>
+        ${f.outcome ? `<button type="button" class="danger" data-action="clear-result" data-fixture="${esc(f.id)}">Remove result</button>` : ""}
+      </div>
+    </form>
+  </section>`;
 }
 
 // The selection report ---------------------------------------------------------------------------------------
@@ -632,6 +711,62 @@ const handlers = {
   async "publish-side"(button) {
     await must(db.from("fixtures").update({ squad: state.draftSquad.ids }).eq("id", button.dataset.fixture));
     await refresh("Side published.");
+  },
+  async "save-result"(form) {
+    const fixtureID = form.dataset.fixture;
+    const values = new FormData(form);
+    const number = (name, id) => {
+      const text = (values.get(`${name}__${id}`) ?? "").trim();
+      if (!text) return null;
+      if (!/^\d+$/.test(text)) throw new Error(`“${text}” for ${player(id)?.name} isn’t a whole number.`);
+      return Number(text);
+    };
+
+    const rows = [];
+    const dropped = [];
+    for (const tr of form.querySelectorAll("tbody tr[data-player]")) {
+      const id = tr.dataset.player;
+      if (!values.has(`played__${id}`)) {
+        dropped.push(id);
+        continue;
+      }
+      rows.push({
+        fixture_id: fixtureID,
+        player_id: id,
+        runs: number("runs", id),
+        balls_faced: number("balls", id) ?? 0,
+        is_out: values.has(`out__${id}`),
+        balls_bowled: ballsFromOvers(values.get(`overs__${id}`) ?? ""),
+        runs_conceded: number("conceded", id) ?? 0,
+        wickets: number("wickets", id) ?? 0,
+        catches: number("catches", id) ?? 0,
+      });
+    }
+
+    await must(db.from("fixtures").update({
+      outcome: values.get("outcome"),
+      kingston_score: values.get("kingston_score").trim(),
+      opposition_score: values.get("opposition_score").trim(),
+      summary: values.get("summary").trim(),
+      player_of_the_match: values.get("player_of_the_match") || null,
+    }).eq("id", fixtureID));
+    if (rows.length) await must(db.from("performances").upsert(rows, { onConflict: "fixture_id,player_id" }));
+    if (dropped.length) await must(db.from("performances").delete().eq("fixture_id", fixtureID).in("player_id", dropped));
+    await refresh("Result saved. It’s in the app and the stats now.");
+  },
+  "add-score-row"(select) {
+    if (!select.value) return;
+    const f = state.fixtures.find((x) => x.id === select.dataset.fixture);
+    select.closest("form").querySelector("tbody").insertAdjacentHTML("beforeend", scoreRow(f, select.value, null, true));
+    select.querySelector(`option[value="${CSS.escape(select.value)}"]`).remove();
+    select.value = "";
+  },
+  async "clear-result"(button) {
+    if (!confirm("Remove the result and scorecard? The game will no longer count in the stats.")) return;
+    const id = button.dataset.fixture;
+    await must(db.from("fixtures").update({ outcome: null, kingston_score: "", opposition_score: "", summary: "", player_of_the_match: null }).eq("id", id));
+    await must(db.from("performances").delete().eq("fixture_id", id));
+    await refresh("Result removed.");
   },
   async "clear-side"(button) {
     if (!confirm("Unpublish the side? If replies haven’t closed yet, players can reply again.")) return;

@@ -108,6 +108,9 @@ td:first-child { white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.flag td { background: color-mix(in srgb, var(--red) 7%, transparent); }
 
+table.scorecard input.num { width: 4.5em; text-align: right; padding: 6px 8px; }
+table.scorecard td { vertical-align: middle; }
+
 .history { margin: 4px 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--ink-secondary); }
 
 .notice {
