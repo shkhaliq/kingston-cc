@@ -1,6 +1,7 @@
 // Kingston CC club admin. Talks straight to Supabase with the same public key as the app; what each login can
 // change is decided by the database's access rules, so only people in the admins table can edit anything.
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+import { nameKey, parseScorecard, teamCard } from "./cricclubs.js";
 
 const SUPABASE_URL = "https://ekjirhrzungmdkmfugmu.supabase.co";
 const SUPABASE_KEY = "sb_publishable_IEbcz8qZY6Vo6ZmW_ID1GA_BOoGKAvG";
@@ -266,7 +267,7 @@ function renderFixture(id) {
         <a class="button" href="#/edit/${encodeURIComponent(f.id)}">Edit details</a>
       </div>
       <p class="muted">${esc(league(f.league_id)?.name)} · Round ${f.round} · ${esc(longDay(f.start))}, ${esc(time(f.start))}${f.meet ? ` (meet ${esc(time(f.meet))})` : ""} · ${esc(f.venue)}</p>
-      <p>Replies close <b>${esc(dayAndTime(deadline))}</b>${special}.${f.status !== "scheduled" ? ` <span class="tag no">${esc(f.status)}</span>` : ""}</p>
+      <p>Replies close <b>${esc(dayAndTime(deadline))}</b>${special}${f.status !== "scheduled" ? ` <span class="tag no">${esc(f.status)}</span>` : ""}</p>
     </section>
 
     <section>
@@ -494,6 +495,14 @@ function resultSection(f) {
 
   return `<section>
     <h2>Result and scorecard</h2>
+    <details class="import" ${f.outcome ? "" : "open"}>
+      <summary>Fill in from CricClubs</summary>
+      <p class="muted">On CricClubs, open the match and its <b>Full Scorecard</b> tab, press Cmd+A then Cmd+C, and paste it here.
+        Nothing is saved until you check the form below and press Save result.</p>
+      <textarea id="cricclubs-text" rows="4" aria-label="CricClubs scorecard text" placeholder="Paste the scorecard here"></textarea>
+      <div class="actions"><button type="button" data-action="read-cricclubs" data-fixture="${esc(f.id)}">Read scorecard</button></div>
+      <div id="cricclubs-review"></div>
+    </details>
     <form data-action="save-result" data-fixture="${esc(f.id)}">
       <div class="grid">
         <label>Result <select name="outcome" required>
@@ -524,6 +533,62 @@ function resultSection(f) {
       </div>
     </form>
   </section>`;
+}
+
+// Importing from CricClubs ------------------------------------------------------------------------------------
+
+/** CricClubs names an admin has matched to players before, remembered on this computer. */
+function savedNames() {
+  try {
+    return JSON.parse(localStorage.getItem("cricclubs-names") ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function guessPlayer(name) {
+  const saved = savedNames()[nameKey(name)];
+  if (saved && player(saved)) return saved;
+  return state.players.find((p) => nameKey(p.name) === nameKey(name))?.id ?? "";
+}
+
+let imported = null; // { fixtureID, card, team }
+
+function renderImportReview() {
+  const box = document.getElementById("cricclubs-review");
+  if (!box || !imported) return;
+  const f = state.fixtures.find((x) => x.id === imported.fixtureID);
+  const result = teamCard(imported.card, imported.team);
+  const squad = [...squadOf(f.league_id)].map(player).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const others = state.players.filter((p) => !squadOf(f.league_id).has(p.id));
+  const choices = (selected) => `<option value="">Not one of ours, skip</option>
+    <optgroup label="${esc(league(f.league_id)?.name)}">${squad.map((p) => `<option value="${esc(p.id)}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>
+    ${others.length ? `<optgroup label="Other players">${others.map((p) => `<option value="${esc(p.id)}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>` : ""}`;
+  const describe = (x) => [
+    x.runs === null ? "didn’t bat" : `${x.runs}${x.out ? "" : "*"} (${x.balls})`,
+    x.ballsBowled ? `${x.wickets}/${x.conceded} in ${oversFromBalls(x.ballsBowled)} ov` : "",
+    x.catches ? `${x.catches} ct` : "",
+  ].filter(Boolean).join(", ");
+
+  box.innerHTML = `
+    <div class="grid">
+      <label>Which team is Kingston? <select data-action="cricclubs-team">
+        ${imported.card.teams.map((t) => `<option ${t === imported.team ? "selected" : ""}>${esc(t)}</option>`).join("")}
+      </select></label>
+      <p style="margin:0;align-self:end">${esc(imported.card.resultLine || "No result line found")}<br>
+        <span class="muted">${esc(result.kingstonScore)} v ${esc(result.oppositionScore)}</span></p>
+    </div>
+    <p class="muted">Match each CricClubs name to a player. Choices are remembered on this computer for next time.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>CricClubs</th><th>Figures</th><th>Player</th></tr></thead>
+      <tbody>${result.players.map((x) => `<tr>
+        <td>${esc(x.name)}</td><td class="muted">${esc(describe(x))}</td>
+        <td><select data-cricclubs-name="${esc(x.name)}" aria-label="Player for ${esc(x.name)}">${choices(guessPlayer(x.name))}</select></td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    ${result.unmatchedCatches.length ? `<p class="notice error">Couldn’t tell who took ${result.unmatchedCatches.length === 1 ? "this catch" : "these catches"}: ${esc(result.unmatchedCatches.join(", "))}. Add ${result.unmatchedCatches.length === 1 ? "it" : "them"} by hand.</p>` : ""}
+    <p class="muted">Stumpings and run outs aren’t counted; the app only records catches.</p>
+    <div class="actions"><button type="button" class="primary" data-action="fill-cricclubs">Fill in the form</button></div>`;
 }
 
 // The selection report ---------------------------------------------------------------------------------------
@@ -760,6 +825,73 @@ const handlers = {
     select.closest("form").querySelector("tbody").insertAdjacentHTML("beforeend", scoreRow(f, select.value, null, true));
     select.querySelector(`option[value="${CSS.escape(select.value)}"]`).remove();
     select.value = "";
+  },
+  "read-cricclubs"(button) {
+    const card = parseScorecard(document.getElementById("cricclubs-text").value);
+    const f = state.fixtures.find((x) => x.id === button.dataset.fixture);
+    const opponentWord = f.opponent.split(" ")[0].toLowerCase();
+    const team = card.teams.find((t) => /kingston/i.test(t))
+      ?? card.teams.find((t) => !t.toLowerCase().includes(opponentWord))
+      ?? card.teams[0];
+    imported = { fixtureID: f.id, card, team };
+    renderImportReview();
+  },
+  "cricclubs-team"(select) {
+    imported.team = select.value;
+    renderImportReview();
+  },
+  "fill-cricclubs"() {
+    const f = state.fixtures.find((x) => x.id === imported.fixtureID);
+    const result = teamCard(imported.card, imported.team);
+    const form = document.querySelector("form[data-action=save-result]");
+    const names = savedNames();
+    const chosen = new Map();
+    for (const select of document.querySelectorAll("[data-cricclubs-name]")) {
+      const name = select.dataset.cricclubsName;
+      if (select.value) {
+        if (chosen.has(select.value)) throw new Error(`${player(select.value)?.name} is matched to two CricClubs names. Fix that, then try again.`);
+        chosen.set(select.value, result.players.find((x) => x.name === name));
+        names[nameKey(name)] = select.value;
+      }
+    }
+    try {
+      localStorage.setItem("cricclubs-names", JSON.stringify(names));
+    } catch {
+      // Remembering names is only a convenience.
+    }
+
+    form.outcome.value = result.outcome ?? "";
+    form.kingston_score.value = result.kingstonScore;
+    form.opposition_score.value = result.oppositionScore;
+
+    const tbody = form.querySelector("tbody");
+    const addSelect = form.querySelector("[data-action=add-score-row]");
+    for (const tr of tbody.querySelectorAll("tr[data-player]")) {
+      form.querySelector(`[name="played__${CSS.escape(tr.dataset.player)}"]`).checked = chosen.has(tr.dataset.player);
+    }
+    for (const [id, x] of chosen) {
+      if (!tbody.querySelector(`tr[data-player="${CSS.escape(id)}"]`)) {
+        tbody.insertAdjacentHTML("beforeend", scoreRow(f, id, null, true));
+        addSelect?.querySelector(`option[value="${CSS.escape(id)}"]`)?.remove();
+      }
+      const set = (name, value) => { form.querySelector(`[name="${name}__${CSS.escape(id)}"]`).value = value; };
+      form.querySelector(`[name="played__${CSS.escape(id)}"]`).checked = true;
+      set("runs", x.runs ?? "");
+      set("balls", x.runs === null ? "" : x.balls);
+      form.querySelector(`[name="out__${CSS.escape(id)}"]`).checked = x.out;
+      set("overs", oversFromBalls(x.ballsBowled));
+      set("conceded", x.ballsBowled ? x.conceded : "");
+      set("wickets", x.ballsBowled ? x.wickets : "");
+      set("catches", x.catches || "");
+    }
+    // The player of the match list only offers people in the scorecard.
+    const motm = form.player_of_the_match;
+    for (const id of chosen.keys()) {
+      if (![...motm.options].some((o) => o.value === id)) motm.add(new Option(player(id)?.name ?? id, id));
+    }
+    document.getElementById("cricclubs-review").innerHTML =
+      `<p class="notice">Filled in ${chosen.size} players from CricClubs. Check the form below, choose a player of the match, then press Save result.</p>`;
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
   },
   async "clear-result"(button) {
     if (!confirm("Remove the result and scorecard? The game will no longer count in the stats.")) return;

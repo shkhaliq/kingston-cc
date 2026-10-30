@@ -111,6 +111,9 @@ tr.flag td { background: color-mix(in srgb, var(--red) 7%, transparent); }
 table.scorecard input.num { width: 4.5em; text-align: right; padding: 6px 8px; }
 table.scorecard td { vertical-align: middle; }
 
+details.import { background: var(--paper); border-radius: 16px; padding: 10px 16px; margin: 8px 0 16px; }
+details.import summary { cursor: pointer; font-weight: 700; }
+
 .history { margin: 4px 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--ink-secondary); }
 
 .notice {
