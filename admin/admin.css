@@ -42,7 +42,7 @@ button, .button {
   color: var(--ink);
 }
 button.primary, .button.primary { background: var(--red); color: #fff; }
-button.small { padding: 5px 11px; font-size: 0.9rem; }
+button.small, .button.small { padding: 5px 11px; font-size: 0.9rem; white-space: nowrap; }
 button:disabled { opacity: 0.45; cursor: default; }
 button.danger { color: var(--red); }
 

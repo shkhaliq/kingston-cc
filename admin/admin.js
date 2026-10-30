@@ -18,6 +18,7 @@ const state = {
   history: [],
   admins: [],
   logins: [],
+  accounts: null,    // login emails by player, from the manage-logins function; null if it couldn't be reached
   league: null,      // the chosen league's id, or "all"
   draftSquad: null,  // the side being picked, before it's published
   notice: null,
@@ -103,8 +104,28 @@ async function loadAll() {
     must(db.from("player_logins").select("*")),
   ]);
   Object.assign(state, { leagues, players, fixtures, votes, history, admins, logins });
+  try {
+    state.accounts = await callLogins({ action: "list" });
+  } catch {
+    state.accounts = null;
+  }
   const saved = localStorage.getItem("league");
   if (!state.league) state.league = saved === "all" || league(saved) ? saved : leagues[0]?.id ?? "all";
+}
+
+/** Calls the manage-logins Edge Function, which holds the secret key needed to create and reset logins. */
+async function callLogins(body) {
+  const { data, error } = await db.functions.invoke("manage-logins", { body });
+  if (error) {
+    let message = error.message;
+    try {
+      message = (await error.context.json()).error ?? message;
+    } catch {
+      // Not a JSON reply; keep the general message.
+    }
+    throw new Error(message);
+  }
+  return data;
 }
 
 // Screens ----------------------------------------------------------------------------------------------------
@@ -118,6 +139,12 @@ function render() {
     fixture: () => renderFixture(decodeURIComponent(route[1] ?? "")),
     new: () => renderFixtureForm(null),
     edit: () => renderFixtureForm(state.fixtures.find((f) => f.id === decodeURIComponent(route[1] ?? ""))),
+    squad: renderSquad,
+    "add-player": () => renderPlayerForm(null),
+    "edit-player": () => {
+      const p = player(decodeURIComponent(route[1] ?? ""));
+      return p ? renderPlayerForm(p) : '<section><p>No such player. <a href="#/squad">Back to the squad</a></p></section>';
+    },
     players: renderReport,
     player: () => renderTimeline(decodeURIComponent(route[1] ?? "")),
   };
@@ -125,10 +152,10 @@ function render() {
 }
 
 function bar(current) {
-  const link = (href, label, key) => `<a href="#/${href}" ${current === key || (key === "fixtures" && ["fixture", "new", "edit"].includes(current)) || (key === "players" && current === "player") ? 'aria-current="page"' : ""}>${label}</a>`;
+  const link = (href, label, key) => `<a href="#/${href}" ${current === key || (key === "fixtures" && ["fixture", "new", "edit"].includes(current)) || (key === "players" && current === "player") || (key === "squad" && ["add-player", "edit-player"].includes(current)) ? 'aria-current="page"' : ""}>${label}</a>`;
   const options = state.leagues.map((l) => `<option value="${esc(l.id)}" ${state.league === l.id ? "selected" : ""}>${esc(l.name)}${l.is_active ? "" : " (finished)"}</option>`).join("");
   return `<div class="bar">
-    <nav>${link("fixtures", "Fixtures", "fixtures")}${link("players", "Players", "players")}</nav>
+    <nav>${link("fixtures", "Fixtures", "fixtures")}${link("squad", "Squad", "squad")}${link("players", "Report", "players")}</nav>
     <label style="flex:0 1 260px"><span class="hint">League</span>
       <select data-action="league">${options}<option value="all" ${state.league === "all" ? "selected" : ""}>All leagues</option></select>
     </label>
@@ -302,6 +329,122 @@ function sidePicker(f, groups) {
       ${f.squad.length ? `<button class="danger" data-action="clear-side" data-fixture="${esc(f.id)}">Unpublish side</button>` : ""}
     </div>
   </section>`;
+}
+
+// The squad and logins ---------------------------------------------------------------------------------------
+
+const ROLES = { batter: "Batter", bowler: "Bowler", all_rounder: "All-rounder", wicket_keeper: "Wicket-keeper" };
+
+const account = (playerID) => state.accounts?.find((a) => a.player_id === playerID);
+
+function loginTag(p) {
+  if (!state.accounts) return state.logins.some((l) => l.player_id === p.id) ? '<span class="tag">Has login</span>' : '<span class="tag">No login</span>';
+  const a = account(p.id);
+  if (!a) return '<span class="tag">No login</span>';
+  return a.disabled ? `<span class="tag no">Login off · ${esc(a.email)}</span>` : `<span class="tag yes">${esc(a.email)}</span>`;
+}
+
+function renderSquad() {
+  const inScope = state.league === "all" ? state.players : [...squadOf(state.league)].map(player).filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
+  const row = (p, extra = "") => `<li>
+      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}<br>
+        <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
+      ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
+  const where = state.league === "all" ? "the club" : esc(league(state.league)?.name);
+  return `${state.accounts ? "" : '<p class="notice error">Logins can’t be managed right now: the manage-logins function isn’t reachable. Players can still be added and edited.</p>'}
+    <section>
+      <div class="actions" style="justify-content:space-between">
+        <h2 style="margin:0">Squad · ${where}</h2>
+        <a class="button primary" href="#/add-player">Add player</a>
+      </div>
+      ${inScope.length ? `<ul class="list">${inScope.map((p) => row(p)).join("")}</ul>` : '<p class="muted">No players yet.</p>'}
+    </section>
+    ${others.length ? `<section><h2>Not in this league</h2><p class="muted">Players from other leagues. Add them to ${where} so they’re asked about its games.</p>
+      <ul class="list">${others.map((p) => row(p, `<button class="small" data-action="join-league" data-player="${esc(p.id)}">Add to league</button>`)).join("")}</ul></section>` : ""}`;
+}
+
+function renderPlayerForm(p) {
+  const memberOf = (l) => (p ? squadOf(l.id).has(p.id) : l.id === state.league);
+  const leagues = state.leagues.filter((l) => l.is_active || (p && squadOf(l.id).has(p.id)));
+  const a = p && account(p.id);
+  const hasLogin = p && (a || state.logins.some((l) => l.player_id === p.id));
+
+  let login = "";
+  if (!state.accounts) {
+    login = '<p class="muted">Logins can’t be managed right now because the manage-logins function isn’t reachable.</p>';
+  } else if (!p) {
+    login = `<p class="muted">Optional. Fill these in to give them a login now, then send them their email and passcode.</p>
+      <div class="grid">
+        <label>Email <input name="email" type="email" autocomplete="off"></label>
+        ${passcodeField("passcode")}
+      </div>`;
+  } else if (hasLogin) {
+    login = `<p>Signs in as <b>${esc(a?.email ?? "")}</b>${a?.disabled ? ' · <span class="tag no">Login turned off</span>' : ""}</p>
+      <div class="grid">${passcodeField("new_passcode", "New passcode")}</div>
+      <div class="actions">
+        <button type="button" data-action="reset-passcode" data-player="${esc(p.id)}">Set new passcode</button>
+        ${a?.disabled
+          ? `<button type="button" data-action="enable-login" data-player="${esc(p.id)}">Turn login back on</button>`
+          : `<button type="button" class="danger" data-action="disable-login" data-player="${esc(p.id)}">Turn login off</button>`}
+      </div>
+      <p class="muted">Turning a login off stops it signing in but keeps the record of their replies.</p>`;
+  } else {
+    login = `<p class="muted">No login yet.</p>
+      <div class="grid">
+        <label>Email <input name="new_email" type="email" autocomplete="off"></label>
+        ${passcodeField("new_login_passcode")}
+      </div>
+      <div class="actions"><button type="button" data-action="create-login" data-player="${esc(p.id)}">Create login</button></div>`;
+  }
+
+  return `<section>
+    <h2>${p ? `Edit ${esc(p.name)}` : "Add a player"}</h2>
+    <form data-action="save-player" data-id="${esc(p?.id ?? "")}">
+      <div class="grid">
+        <label>Name <input name="name" required value="${esc(p?.name)}"></label>
+        <label>Role <select name="role">${Object.entries(ROLES).map(([value, label]) => `<option value="${value}" ${(p?.role ?? "batter") === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      </div>
+      <div class="grid">
+        <label>Batting <input name="batting_style" placeholder="Right-hand bat" value="${esc(p?.batting_style)}"></label>
+        <label>Bowling <span class="hint">Optional</span><input name="bowling_style" placeholder="Right-arm medium" value="${esc(p?.bowling_style)}"></label>
+      </div>
+      <div class="actions">
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="is_captain" ${p?.is_captain ? "checked" : ""}> Captain</label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="is_vice_captain" ${p?.is_vice_captain ? "checked" : ""}> Vice-captain</label>
+      </div>
+      <h3>Leagues</h3>
+      <div class="actions">${leagues.map((l) => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="league" value="${esc(l.id)}" ${memberOf(l) ? "checked" : ""}> ${esc(l.name)}</label>`).join("") || '<span class="muted">No leagues yet.</span>'}</div>
+      ${p ? "" : `<h3>Login</h3>${login}`}
+      <div class="actions">
+        <button class="primary">${p ? "Save changes" : "Add player"}</button>
+        <a class="button" href="#/squad">Cancel</a>
+      </div>
+    </form>
+  </section>
+  ${p ? `<section><h2>Login</h2>${login}</section>` : ""}`;
+}
+
+/** A passcode box with a button that fills in a random one, shown in full so it can be passed on. */
+function passcodeField(name, label = "Passcode") {
+  return `<label>${label} <span class="hint">At least 6 characters</span>
+    <span style="display:flex;gap:8px"><input name="${name}" type="text" autocomplete="off" minlength="6" spellcheck="false">
+    <button type="button" class="small" data-action="suggest-passcode" data-field="${name}">Make one</button></span></label>`;
+}
+
+function randomPasscode() {
+  const letters = "abcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return [...bytes].map((byte) => letters[byte % letters.length]).join("");
+}
+
+/** A short, stable ID from the name, such as "sam-patel", made unique if needed. */
+function newPlayerID(name) {
+  const base = slug(name) || "player";
+  let id = base;
+  for (let n = 2; player(id); n += 1) id = `${base}-${n}`;
+  return id;
 }
 
 // The selection report ---------------------------------------------------------------------------------------
@@ -495,6 +638,78 @@ const handlers = {
     await must(db.from("fixtures").update({ squad: [] }).eq("id", button.dataset.fixture));
     state.draftSquad = null;
     await refresh("Side unpublished.");
+  },
+  async "save-player"(form) {
+    const values = new FormData(form);
+    const row = {
+      name: values.get("name").trim(),
+      role: values.get("role"),
+      batting_style: values.get("batting_style").trim(),
+      bowling_style: values.get("bowling_style").trim(),
+      is_captain: values.has("is_captain"),
+      is_vice_captain: values.has("is_vice_captain"),
+    };
+    const email = values.get("email")?.trim();
+    const passcode = values.get("passcode") ?? "";
+    if (email && passcode.length < 6) throw new Error("Give the login a passcode of at least 6 characters, or leave the email empty.");
+
+    let id = form.dataset.id;
+    if (id) {
+      await must(db.from("players").update(row).eq("id", id));
+    } else {
+      id = newPlayerID(row.name);
+      await must(db.from("players").insert({ ...row, id }));
+    }
+
+    const wanted = new Set(values.getAll("league"));
+    const current = new Set(state.leagues.filter((l) => squadOf(l.id).has(id)).map((l) => l.id));
+    const join = [...wanted].filter((l) => !current.has(l)).map((league_id) => ({ league_id, player_id: id }));
+    const leave = [...current].filter((l) => !wanted.has(l) && state.leagues.some((x) => x.id === l && x.is_active));
+    if (join.length) await must(db.from("league_players").insert(join));
+    for (const league_id of leave) await must(db.from("league_players").delete().eq("league_id", league_id).eq("player_id", id));
+
+    let message = `${row.name} saved.`;
+    if (email) {
+      try {
+        await callLogins({ action: "create", player_id: id, email, passcode });
+        message = `${row.name} added. They sign in with ${email} and the passcode ${passcode}.`;
+      } catch (error) {
+        location.hash = `#/edit-player/${encodeURIComponent(id)}`;
+        await refresh();
+        notify(`${row.name} was added, but the login wasn’t: ${error.message}`, true);
+        return render();
+      }
+    }
+    location.hash = "#/squad";
+    await refresh(message);
+  },
+  async "join-league"(button) {
+    await must(db.from("league_players").insert({ league_id: state.league, player_id: button.dataset.player }));
+    await refresh(`${player(button.dataset.player)?.name} is now in ${league(state.league)?.name}.`);
+  },
+  "suggest-passcode"(button) {
+    button.closest("label").querySelector("input").value = randomPasscode();
+  },
+  async "create-login"(button) {
+    const section = button.closest("section");
+    const email = section.querySelector("[name=new_email]").value.trim();
+    const passcode = section.querySelector("[name=new_login_passcode]").value;
+    await callLogins({ action: "create", player_id: button.dataset.player, email, passcode });
+    await refresh(`Login created. ${player(button.dataset.player)?.name} signs in with ${email} and the passcode ${passcode}.`);
+  },
+  async "reset-passcode"(button) {
+    const passcode = button.closest("section").querySelector("[name=new_passcode]").value;
+    await callLogins({ action: "reset", player_id: button.dataset.player, passcode });
+    await refresh(`${player(button.dataset.player)?.name}’s new passcode is ${passcode}.`);
+  },
+  async "disable-login"(button) {
+    if (!confirm(`Turn off ${player(button.dataset.player)?.name}’s login? They won’t be able to sign in until it’s turned back on.`)) return;
+    await callLogins({ action: "disable", player_id: button.dataset.player });
+    await refresh("Login turned off.");
+  },
+  async "enable-login"(button) {
+    await callLogins({ action: "enable", player_id: button.dataset.player });
+    await refresh("Login turned back on.");
   },
   sort(button) {
     sortDescending = sortKey === button.dataset.key ? !sortDescending : button.dataset.key !== "name";
