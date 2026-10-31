@@ -148,15 +148,21 @@ function render() {
     },
     players: renderReport,
     player: () => renderTimeline(decodeURIComponent(route[1] ?? "")),
+    leagues: renderLeagues,
+    "new-league": () => renderLeagueForm(null),
+    "edit-league": () => {
+      const l = league(decodeURIComponent(route[1] ?? ""));
+      return l ? renderLeagueForm(l) : '<section><p>No such league. <a href="#/leagues">Back to leagues</a></p></section>';
+    },
   };
   app.innerHTML = bar(route[0] || "fixtures") + noticeHTML() + (screens[route[0]] ?? renderFixtures)();
 }
 
 function bar(current) {
-  const link = (href, label, key) => `<a href="#/${href}" ${current === key || (key === "fixtures" && ["fixture", "new", "edit"].includes(current)) || (key === "players" && current === "player") || (key === "squad" && ["add-player", "edit-player"].includes(current)) ? 'aria-current="page"' : ""}>${label}</a>`;
+  const link = (href, label, key) => `<a href="#/${href}" ${current === key || (key === "fixtures" && ["fixture", "new", "edit"].includes(current)) || (key === "players" && current === "player") || (key === "squad" && ["add-player", "edit-player"].includes(current)) || (key === "leagues" && ["new-league", "edit-league"].includes(current)) ? 'aria-current="page"' : ""}>${label}</a>`;
   const options = state.leagues.map((l) => `<option value="${esc(l.id)}" ${state.league === l.id ? "selected" : ""}>${esc(l.name)}${l.is_active ? "" : " (finished)"}</option>`).join("");
   return `<div class="bar">
-    <nav>${link("fixtures", "Fixtures", "fixtures")}${link("squad", "Squad", "squad")}${link("players", "Report", "players")}</nav>
+    <nav>${link("fixtures", "Fixtures", "fixtures")}${link("squad", "Squad", "squad")}${link("players", "Report", "players")}${link("leagues", "Leagues", "leagues")}</nav>
     <label style="flex:0 1 260px"><span class="hint">League</span>
       <select data-action="league">${options}<option value="all" ${state.league === "all" ? "selected" : ""}>All leagues</option></select>
     </label>
@@ -353,7 +359,7 @@ function renderSquad() {
   const inScope = state.league === "all" ? state.players : [...squadOf(state.league)].map(player).filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
   const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
-  const row = (p, extra = "") => `<li>
+  const row = (p, extra = "") => `<li data-name="${esc(p.name.toLocaleLowerCase())}">
       <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}<br>
         <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
       ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
@@ -364,6 +370,7 @@ function renderSquad() {
         <h2 style="margin:0">Squad · ${where}</h2>
         <a class="button primary" href="#/add-player">Add player</a>
       </div>
+      ${state.players.length > 12 ? '<label>Find a player <input type="search" data-filter="squad" placeholder="Name" autocomplete="off"></label>' : ""}
       ${inScope.length ? `<ul class="list">${inScope.map((p) => row(p)).join("")}</ul>` : '<p class="muted">No players yet.</p>'}
     </section>
     ${others.length ? `<section><h2>Not in this league</h2><p class="muted">Players from other leagues. Add them to ${where} so they’re asked about its games.</p>
@@ -463,6 +470,56 @@ function newPlayerID(name) {
   const base = slug(name) || "player";
   let id = base;
   for (let n = 2; player(id); n += 1) id = `${base}-${n}`;
+  return id;
+}
+
+// Leagues ----------------------------------------------------------------------------------------------------
+
+const FORMATS = ["T20", "T10", "40 overs", "50 overs"];
+
+function renderLeagues() {
+  const row = (l) => {
+    const games = state.fixtures.filter((f) => f.league_id === l.id).length;
+    return `<li><span class="grow"><b>${esc(l.name)}</b> ${l.is_active ? '<span class="tag yes">Running</span>' : '<span class="tag">Finished</span>'}<br>
+      <span class="muted">${esc(l.format)} · starts ${esc(new Date(`${l.starts_on}T12:00:00`).toLocaleDateString("en-CA", { day: "numeric", month: "short", year: "numeric" }))} · ${squadOf(l.id).size} players · ${games} ${games === 1 ? "game" : "games"}</span></span>
+      <a class="button small" href="#/edit-league/${encodeURIComponent(l.id)}">Edit</a></li>`;
+  };
+  return `<section>
+    <div class="actions" style="justify-content:space-between">
+      <h2 style="margin:0">Leagues</h2>
+      <a class="button primary" href="#/new-league">New league</a>
+    </div>
+    <p class="muted">Each league has its own squad, and only its squad is asked about its games. A player can be in any number of leagues; their login and career stats stay the same.</p>
+    ${state.leagues.length ? `<ul class="list">${state.leagues.map(row).join("")}</ul>` : '<p class="muted">No leagues yet.</p>'}
+  </section>`;
+}
+
+function renderLeagueForm(l) {
+  const formats = FORMATS.includes(l?.format ?? "T20") ? FORMATS : [l.format, ...FORMATS];
+  const copyFrom = state.leagues.filter((x) => squadOf(x.id).size);
+  return `<section>
+    <h2>${l ? `Edit ${esc(l.name)}` : "New league"}</h2>
+    <form data-action="save-league" data-id="${esc(l?.id ?? "")}">
+      <div class="grid">
+        <label>Name <input name="name" required placeholder="Summer League 2027" value="${esc(l?.name)}"></label>
+        <label>Format <select name="format">${formats.map((f) => `<option ${(l?.format ?? "T20") === f ? "selected" : ""}>${esc(f)}</option>`).join("")}</select></label>
+        <label>Starts <input name="starts_on" type="date" required value="${esc(l?.starts_on ?? new Date().toLocaleDateString("en-CA"))}"></label>
+      </div>
+      ${l ? `<label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" name="is_active" ${l.is_active ? "checked" : ""}> Running. Untick when the season’s over: its games leave Fixtures and Availability in the app but stay in Stats, and its squad is kept.</label>`
+        : `<label>Squad <span class="hint">You can add and remove players afterwards on the Squad screen.</span>
+          <select name="copy_from"><option value="">Start empty, for a brand-new squad</option>${copyFrom.map((x) => `<option value="${esc(x.id)}">Copy everyone from ${esc(x.name)} (${squadOf(x.id).size})</option>`).join("")}</select></label>`}
+      <div class="actions">
+        <button class="primary">${l ? "Save changes" : "Create league"}</button>
+        <a class="button" href="#/leagues">Cancel</a>
+      </div>
+    </form>
+  </section>`;
+}
+
+function newLeagueID(name) {
+  const base = slug(name) || "league";
+  let id = base;
+  for (let n = 2; league(id); n += 1) id = `${base}-${n}`;
   return id;
 }
 
@@ -968,6 +1025,26 @@ const handlers = {
     location.hash = "#/squad";
     await refresh(message);
   },
+  async "save-league"(form) {
+    const values = new FormData(form);
+    const row = { name: values.get("name").trim(), format: values.get("format"), starts_on: values.get("starts_on") };
+    if (form.dataset.id) {
+      await must(db.from("leagues").update({ ...row, is_active: values.has("is_active") }).eq("id", form.dataset.id));
+      location.hash = "#/leagues";
+      return refresh(`${row.name} saved.`);
+    }
+    const id = newLeagueID(row.name);
+    await must(db.from("leagues").insert({ ...row, id }));
+    const source = values.get("copy_from");
+    const squad = source ? [...squadOf(source)] : [];
+    if (squad.length) await must(db.from("league_players").insert(squad.map((player_id) => ({ league_id: id, player_id }))));
+    state.league = id;
+    localStorage.setItem("league", id);
+    location.hash = "#/squad";
+    await refresh(squad.length
+      ? `${row.name} created with ${squad.length} players from ${league(source)?.name}. Add or remove players below.`
+      : `${row.name} created. Add its players below: new ones with Add player, or existing ones from “Not in this league”.`);
+  },
   async "join-league"(button) {
     await must(db.from("league_players").insert({ league_id: state.league, player_id: button.dataset.player }));
     await refresh(`${player(button.dataset.player)?.name} is now in ${league(state.league)?.name}.`);
@@ -1030,6 +1107,11 @@ app.addEventListener("submit", (event) => {
   if (!form) return;
   event.preventDefault();
   run(() => handlers[form.dataset.action](form));
+});
+app.addEventListener("input", (event) => {
+  if (!event.target.matches("input[data-filter]")) return;
+  const text = event.target.value.trim().toLocaleLowerCase();
+  for (const item of app.querySelectorAll("li[data-name]")) item.hidden = Boolean(text) && !item.dataset.name.includes(text);
 });
 window.addEventListener("hashchange", () => {
   if (!location.hash.startsWith("#/fixture/")) state.draftSquad = null;

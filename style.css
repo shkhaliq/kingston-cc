@@ -7,6 +7,7 @@
   --cream: #F3EBE0;
   --red: #A3262B;
   --green: #24694F;
+  --lake: #2E6C88;
   --link: #A3262B;
   color-scheme: light dark;
 }
@@ -41,8 +42,8 @@ header.hero {
   color: var(--cream);
   border-radius: 26px;
   padding: 28px 24px 24px;
-  border-top: 8px solid var(--red);
-  box-shadow: inset 0 6px 0 var(--cream), inset 0 12px 0 var(--green);
+  border-top: 8px solid var(--lake);
+  box-shadow: inset 0 6px 0 var(--cream), inset 0 12px 0 var(--red);
   display: flex;
   gap: 20px;
   align-items: center;
