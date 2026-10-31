@@ -90,8 +90,8 @@ button.danger { color: var(--red); }
 .tag.yes { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--green); }
 .tag.no { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
 @media (prefers-color-scheme: dark) {
-  .tag.yes { color: #9BC994; }
-  .tag.no { color: #F08C91; }
+  .tag.yes { color: #7FC0A3; }
+  .tag.no { color: #EE8A8F; }
 }
 
 .counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
