@@ -15,7 +15,7 @@
     <img src="crest.png" alt="Kingston Cricket Club crest">
     <div>
       <h1>Privacy policy</h1>
-      <p>Kingston CC app · Last updated 30 October 2026</p>
+      <p>Kingston CC app · Last updated 31 October 2026</p>
     </div>
   </header>
 
@@ -35,7 +35,8 @@
     <h2>The short version</h2>
     <ul>
       <li>If you just browse fixtures, results and stats, the app doesn’t ask for or store anything about you.</li>
-      <li>Squad players with a login share their email address, name, cricket profile and availability replies with the club.</li>
+      <li>Squad players with a login share their email address, name, cricket profile and availability replies with the club.
+        If they turn on notifications, we also store a code that lets us send notifications to their phone.</li>
       <li>There are no adverts, no analytics and no tracking, and we never sell your information.</li>
     </ul>
   </section>
@@ -57,11 +58,19 @@
 
     <h3>Availability replies</h3>
     <p>When you tell the captain whether you can play, we store your answer and when you gave it. The captain and
-      other signed-in squad players can see who is available so the side can be picked.</p>
+      club admins can see who is available so the side can be picked. Other players only see their own reply.</p>
     <p>We also keep a record of each reply and every change to it, with when it was made and whether you or a
       club admin made it. A club admin can give or change a reply for you, for example if you tell the captain in
       person. Only club admins can see this record, and we use it to help pick sides fairly and answer questions
       about selection.</p>
+
+    <h3>Notifications</h3>
+    <p>If you turn on notifications, your phone gives the app a push token: a random code from Apple that lets us
+      send notifications to that phone. We store it with your login and use it only to tell you about new games,
+      replies closing soon, being picked, and games being cancelled or postponed. Notifications are delivered by
+      Apple’s push notification service. We also note which notifications we’ve sent, so you don’t get the same one
+      twice. Signing out removes your phone’s push token, and you can turn notifications off at any time in your
+      iPhone’s Settings.</p>
 
     <h3>Technical information</h3>
     <p>Like any online service, our hosting provider receives your device’s IP address and basic request details
@@ -74,9 +83,9 @@
     <ul>
       <li><strong>Anyone using the app</strong>, signed in or not, can see fixtures, results, team sheets, player
         names, profiles and stats. Treat these as public, like a club scorebook or noticeboard.</li>
-      <li><strong>Signed-in squad players</strong> can also see availability replies for upcoming games.</li>
-      <li><strong>The captain and club officials</strong> who run the app can see and manage all of the above,
-        including logins.</li>
+      <li><strong>Signed-in squad players</strong> can also see and change their own availability replies.</li>
+      <li><strong>The captain and club admins</strong> who run the app can see and manage all of the above,
+        including everyone’s availability replies and logins.</li>
       <li><strong>Nobody can see your passcode</strong>, and email addresses are never shown in the app.</li>
     </ul>
   </section>
@@ -86,13 +95,16 @@
     <p>The club’s data is hosted by <a href="https://supabase.com/privacy">Supabase</a>, which acts as our service
       provider and only processes it on our behalf. On your phone, the app keeps your sign-in in the iOS Keychain so
       you stay signed in; signing out removes it.</p>
-    <p>We don’t use any other third-party services in the app. Tapping “Directions” opens Apple Maps, and
-      “Email the captain” opens your email app; what those apps do is covered by their own privacy policies.</p>
+    <p>Notifications are sent through Apple’s push notification service, which receives only your phone’s push token
+      and the notification itself. We don’t use any other third-party services in the app. Tapping “Directions” opens
+      your choice of Apple Maps, Google Maps or Waze, the WhatsApp link opens WhatsApp, and the club’s email address
+      opens your email app; what those apps do is covered by their own privacy policies.</p>
   </section>
 
   <section>
     <h2>How long we keep it</h2>
-    <p>We keep your login, profile and replies while you are in the squad. Match records and stats are kept as part
+    <p>We keep your login, profile and replies while you are in the squad. We keep your phone’s push token until you
+      sign out, or until Apple tells us it’s no longer in use. Match records and stats are kept as part
       of the club’s history. If you leave the club or ask us to, we’ll delete your login and availability replies,
       and can remove your name from past records.</p>
   </section>
