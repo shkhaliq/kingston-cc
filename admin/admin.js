@@ -475,7 +475,7 @@ function newPlayerID(name) {
 
 // Leagues ----------------------------------------------------------------------------------------------------
 
-const FORMATS = ["T20", "T10", "40 overs", "50 overs"];
+const FORMATS = ["T20", "T12", "40 overs", "50 overs"];
 
 function renderLeagues() {
   const row = (l) => {
