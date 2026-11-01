@@ -129,6 +129,69 @@ async function callLogins(body) {
   return data;
 }
 
+// Inviting players ------------------------------------------------------------------------------------------
+// A one-off tool for setting up the squad's logins in bulk. Each player gets an email from Supabase with a link
+// to the club site's set-passcode page, where they choose their own passcode. Remove once everyone has a login.
+
+/** Splits pasted lines, such as First name, Last name and Email copied from the registration sheet, into names and emails. */
+function parseInvites(text) {
+  return text.split("\n").map((line) => {
+    const parts = line.split(/[\t,]/).map((part) => part.trim()).filter(Boolean);
+    const email = parts.find((part) => /^\S+@\S+\.\S+$/.test(part));
+    const name = parts.filter((part) => part !== email && !/^\d/.test(part)).join(" ");
+    return email && name ? { name, email: email.toLowerCase() } : null;
+  }).filter(Boolean);
+}
+
+const words = (text) => text.toLocaleLowerCase().normalize("NFKD").replace(/[^a-z\s]/g, "").split(/\s+/).filter(Boolean);
+
+/** The squad player a pasted name most likely is, among those without a login. */
+function bestMatch(name, candidates) {
+  const wanted = words(name);
+  let best = null;
+  let bestScore = 0;
+  for (const p of candidates) {
+    const have = words(p.name);
+    const shared = have.filter((word) => wanted.includes(word)).length;
+    const score = have.join(" ") === wanted.join(" ") ? 100 : shared === have.length ? 50 + shared : shared;
+    if (score > bestScore && (score >= 50 || shared >= 2)) {
+      best = p;
+      bestScore = score;
+    }
+  }
+  return best?.id ?? "";
+}
+
+const withoutLogin = () => state.players.filter((p) => !account(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+
+function renderInvite() {
+  const rows = state.invites ?? [];
+  const choices = withoutLogin();
+  const picked = rows.filter((row) => row.playerID && !row.done);
+  const statusTag = (row) => row.done ? `<span class="tag yes">${esc(row.done)}</span>` : row.failed ? `<span class="tag no">${esc(row.failed)}</span>` : "";
+  return `<section>
+      <h2>Invite players</h2>
+      <p class="muted">Each player gets an email with a link to choose their own passcode, then signs in to the app with
+        their email and that passcode. Nobody else sees it. Players who already have a login aren't listed.</p>
+      <form data-action="preview-invites">
+        <label>Names and emails <span class="hint">One player per line. Copy the First name, Last name and Email columns from the registration sheet and paste them here.</span>
+          <textarea name="lines" rows="8" placeholder="Ahad\tRehman\tahad@example.com"></textarea></label>
+        <div class="actions"><button type="submit">Match to players</button></div>
+      </form>
+    </section>
+    ${rows.length ? `<section>
+      <h2>Check before sending</h2>
+      <p class="muted">${choices.length} players don't have a login yet. Change any match that's wrong, or choose "Don't invite".</p>
+      <ul class="list">${rows.map((row, index) => `<li>
+          <span class="grow"><b>${esc(row.name)}</b><br><span class="muted">${esc(row.email)}</span> ${statusTag(row)}</span>
+          ${row.done ? "" : `<select data-action="pick-invite" data-index="${index}">
+            <option value="">Don't invite</option>
+            ${choices.map((p) => `<option value="${esc(p.id)}" ${p.id === row.playerID ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+          </select>`}</li>`).join("")}</ul>
+      <div class="actions"><button class="primary" data-action="send-invites" ${picked.length ? "" : "disabled"}>Send ${picked.length} invite${picked.length === 1 ? "" : "s"}</button></div>
+    </section>` : ""}`;
+}
+
 // Screens ----------------------------------------------------------------------------------------------------
 
 function render() {
@@ -141,6 +204,7 @@ function render() {
     new: () => renderFixtureForm(null),
     edit: () => renderFixtureForm(state.fixtures.find((f) => f.id === decodeURIComponent(route[1] ?? ""))),
     squad: renderSquad,
+    invite: renderInvite,
     "add-player": () => renderPlayerForm(null),
     "edit-player": () => {
       const p = player(decodeURIComponent(route[1] ?? ""));
@@ -159,7 +223,7 @@ function render() {
 }
 
 function bar(current) {
-  const link = (href, label, key) => `<a href="#/${href}" ${current === key || (key === "fixtures" && ["fixture", "new", "edit"].includes(current)) || (key === "players" && current === "player") || (key === "squad" && ["add-player", "edit-player"].includes(current)) || (key === "leagues" && ["new-league", "edit-league"].includes(current)) ? 'aria-current="page"' : ""}>${label}</a>`;
+  const link = (href, label, key) => `<a href="#/${href}" ${current === key || (key === "fixtures" && ["fixture", "new", "edit"].includes(current)) || (key === "players" && current === "player") || (key === "squad" && ["add-player", "edit-player", "invite"].includes(current)) || (key === "leagues" && ["new-league", "edit-league"].includes(current)) ? 'aria-current="page"' : ""}>${label}</a>`;
   const options = state.leagues.map((l) => `<option value="${esc(l.id)}" ${state.league === l.id ? "selected" : ""}>${esc(l.name)}${l.is_active ? "" : " (finished)"}</option>`).join("");
   return `<div class="bar">
     <nav>${link("fixtures", "Fixtures", "fixtures")}${link("squad", "Squad", "squad")}${link("players", "Report", "players")}${link("leagues", "Leagues", "leagues")}</nav>
@@ -368,7 +432,7 @@ function renderSquad() {
     <section>
       <div class="actions" style="justify-content:space-between">
         <h2 style="margin:0">Squad · ${where}</h2>
-        <a class="button primary" href="#/add-player">Add player</a>
+        <span class="actions">${state.accounts ? '<a class="button" href="#/invite">Invite players</a>' : ""}<a class="button primary" href="#/add-player">Add player</a></span>
       </div>
       ${state.players.length > 12 ? '<label>Find a player <input type="search" data-filter="squad" placeholder="Name" autocomplete="off"></label>' : ""}
       ${inScope.length ? `<ul class="list">${inScope.map((p) => row(p)).join("")}</ul>` : '<p class="muted">No players yet.</p>'}
@@ -1048,6 +1112,42 @@ const handlers = {
   async "join-league"(button) {
     await must(db.from("league_players").insert({ league_id: state.league, player_id: button.dataset.player }));
     await refresh(`${player(button.dataset.player)?.name} is now in ${league(state.league)?.name}.`);
+  },
+  "preview-invites"(form) {
+    const candidates = withoutLogin();
+    state.invites = parseInvites(form.querySelector("[name=lines]").value).map((row) => ({
+      ...row,
+      playerID: bestMatch(row.name, candidates),
+    }));
+    if (!state.invites.length) notify("No lines with a name and an email address found.", true);
+    render();
+  },
+  "pick-invite"(select) {
+    state.invites[Number(select.dataset.index)].playerID = select.value;
+    render();
+  },
+  async "send-invites"(button) {
+    const chosen = state.invites.filter((row) => row.playerID && !row.done);
+    const players = chosen.map((row) => row.playerID);
+    if (new Set(players).size !== players.length) {
+      notify("The same player is chosen twice. Fix the matches first.", true);
+      return render();
+    }
+    if (!confirm(`Send ${chosen.length} invite emails now?`)) return;
+    button.disabled = true;
+    for (const row of chosen) {
+      try {
+        const result = await callLogins({ action: "invite", player_id: row.playerID, email: row.email });
+        row.done = result.linked ? "Linked to their existing login" : "Invite sent";
+        row.failed = null;
+      } catch (error) {
+        row.failed = error.message;
+      }
+      render();
+    }
+    const sent = chosen.filter((row) => row.done).length;
+    const failed = chosen.length - sent;
+    await refresh(failed ? `${sent} invited. ${failed} couldn't be sent; see the list below.` : `${sent} invited.`);
   },
   "suggest-passcode"(button) {
     button.closest("label").querySelector("input").value = randomPasscode();

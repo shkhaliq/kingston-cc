@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set Your Passcode</title>
+  <meta name="description" content="Choose the passcode you'll use to sign in to the Kingston CC app.">
+  <meta name="robots" content="noindex">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    form { display: grid; gap: 12px; margin-top: 12px; }
+    label { display: grid; gap: 4px; font-weight: 600; color: var(--ink); }
+    input { font: inherit; padding: 12px; border: 1px solid var(--ink-secondary); border-radius: 12px; background: transparent; color: var(--ink); }
+    button { font: inherit; font-weight: 700; padding: 14px; border: 0; border-radius: 14px; background: #11243A; color: #FFFAF2; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .error { color: #A3262B; font-weight: 600; }
+    .done { font-weight: 600; }
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <img src="crest.png" alt="Kingston Cricket Club crest">
+    <div>
+      <h1>Kingston CC</h1>
+      <p>Set up your player login</p>
+    </div>
+  </header>
+
+  <section id="content">
+    <p class="muted">Checking your link…</p>
+  </section>
+
+  <footer class="muted">Problems? Email <a href="mailto:kcc@purelymail.com">kcc@purelymail.com</a>.</footer>
+</main>
+
+<script type="module">
+  // Invite and passcode-reset emails from Supabase link here. Supabase puts a short-lived session for the player
+  // in the link, and this page uses it once, to save the passcode they choose. Nobody else ever sees it.
+  import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
+
+  // Read before Supabase starts, which clears the link's details from the address.
+  const params = new URLSearchParams(location.hash.slice(1));
+  const db = createClient("https://ekjirhrzungmdkmfugmu.supabase.co", "sb_publishable_IEbcz8qZY6Vo6ZmW_ID1GA_BOoGKAvG");
+  const content = document.getElementById("content");
+  const appStore = "https://apps.apple.com/us/app/kingston-cc/id6828550739";
+  const playTest = "https://play.google.com/apps/testing/com.kingston.cricketclub";
+  const esc = (text) => text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  function showExpired(detail) {
+    content.innerHTML = `<h2>This link has expired</h2>
+      <p>Links only work once, for a limited time. ${detail ? esc(detail) + " " : ""}Ask the captain to send you a new one,
+      or email <a href="mailto:kcc@purelymail.com">kcc@purelymail.com</a>.</p>`;
+  }
+
+  function showForm(email) {
+    content.innerHTML = `<h2>Choose your passcode</h2>
+      <p>You'll sign in to the app with <b>${esc(email)}</b> and this passcode. Use at least 6 characters.</p>
+      <form>
+        <label>Passcode <input name="passcode" type="password" minlength="6" autocomplete="new-password" required></label>
+        <label>Type it again <input name="again" type="password" minlength="6" autocomplete="new-password" required></label>
+        <p class="error" hidden></p>
+        <button type="submit">Save passcode</button>
+      </form>`;
+    const form = content.querySelector("form");
+    const error = form.querySelector(".error");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const passcode = form.passcode.value;
+      error.hidden = true;
+      if (passcode !== form.again.value) {
+        error.textContent = "Those don't match. Type the same passcode twice.";
+        error.hidden = false;
+        return;
+      }
+      form.querySelector("button").disabled = true;
+      const { error: saveError } = await db.auth.updateUser({ password: passcode });
+      if (saveError) {
+        error.textContent = saveError.message;
+        error.hidden = false;
+        form.querySelector("button").disabled = false;
+        return;
+      }
+      await db.auth.signOut();
+      showDone(email);
+    });
+  }
+
+  function showDone(email) {
+    content.innerHTML = `<h2>You're all set</h2>
+      <p class="done">Open the Kingston CC app, go to Sign In, and use ${esc(email)} with the passcode you just chose.</p>
+      <p>Don't have the app yet?</p>
+      <ul>
+        <li>iPhone: <a href="${appStore}">Kingston CC on the App Store</a></li>
+        <li>Android: <a href="${playTest}">join the test</a> with the Google account you gave the club, then install it from Google Play</li>
+      </ul>`;
+  }
+
+  // Supabase reads the session from the link as the page loads. An error in the link means it was used or expired.
+  if (params.get("error")) {
+    showExpired(params.get("error_description")?.replaceAll("+", " "));
+  } else {
+    const { data } = await db.auth.getSession();
+    const email = data.session?.user.email;
+    if (email) showForm(email);
+    else showExpired();
+  }
+</script>
+</body>
+</html>
