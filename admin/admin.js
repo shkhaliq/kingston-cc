@@ -238,7 +238,7 @@ function renderFixtureForm(fixture) {
       </div>
       <div class="grid">
         <label>Start <span class="hint">Eastern time</span><input name="start" type="datetime-local" required value="${toInput(f.start)}"></label>
-        <label>Meet <span class="hint">Optional</span><input name="meet" type="datetime-local" value="${toInput(f.meet)}"></label>
+        <label>Meet <span class="hint">Leave empty for 30 minutes before the start</span><input name="meet" type="datetime-local" value="${toInput(f.meet)}"></label>
         <label>Replies close <span class="hint">Leave empty for the Wednesday before at 9pm</span><input name="replies_close_at" type="datetime-local" value="${toInput(f.replies_close_at)}"></label>
       </div>
       <div class="grid">
