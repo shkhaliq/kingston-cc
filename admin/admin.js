@@ -19,6 +19,7 @@ const state = {
   history: [],
   admins: [],
   logins: [],
+  fullTime: new Set(),  // ids of full-time players, who paid for the whole season and are picked first
   accounts: null,    // login emails by player, from the manage-logins function; null if it couldn't be reached
   league: null,      // the chosen league's id, or "all"
   draftSquad: null,  // the side being picked, before it's published
@@ -61,6 +62,11 @@ const answerTag = (answer) => ({
 
 const player = (id) => state.players.find((p) => p.id === id);
 const league = (id) => state.leagues.find((l) => l.id === id);
+const isFullTime = (playerID) => state.fullTime.has(playerID);
+/** A "Full-time" tag for players who paid for the whole season. Only admins can read who's full-time. */
+const fullTimeTag = (playerID) => (isFullTime(playerID) ? ' <span class="tag full" title="Paid for the whole season: pick ahead of part-time players">★ Full-time</span>' : "");
+/** Full-time players first, then by name. */
+const byFullTimeThenName = (a, b) => isFullTime(b.id) - isFullTime(a.id) || a.name.localeCompare(b.name);
 const squadOf = (leagueID) => new Set(league(leagueID)?.league_players.map((m) => m.player_id) ?? []);
 const vote = (fixtureID, playerID) => state.votes.find((v) => v.fixture_id === fixtureID && v.player_id === playerID);
 
@@ -108,7 +114,7 @@ async function loadAll({ accounts = false } = {}) {
       return null;
     })
     : Promise.resolve(state.accounts);
-  const [leagues, players, fixtures, votes, history, admins, logins, emails] = await Promise.all([
+  const [leagues, players, fixtures, votes, history, admins, logins, fullTime, emails] = await Promise.all([
     must(db.from("leagues").select("*, league_players(player_id)").order("is_active", { ascending: false }).order("starts_on", { ascending: false })),
     must(db.from("players").select("*").order("name")),
     must(db.from("fixtures").select("*, replies_deadline, performances(*)").order("start")),
@@ -116,9 +122,13 @@ async function loadAll({ accounts = false } = {}) {
     must(db.from("availability_history").select("*").order("changed_at")),
     must(db.from("admins").select("*")),
     must(db.from("player_logins").select("*")),
+    must(db.from("full_time_players").select("player_id")),
     fetchAccounts,
   ]);
-  Object.assign(state, { leagues, players, fixtures, votes, history, admins, logins, accounts: emails });
+  Object.assign(state, {
+    leagues, players, fixtures, votes, history, admins, logins, accounts: emails,
+    fullTime: new Set(fullTime.map((row) => row.player_id)),
+  });
   const saved = localStorage.getItem("league");
   if (!state.league) state.league = saved === "all" || league(saved) ? saved : leagues[0]?.id ?? "all";
 }
@@ -276,7 +286,7 @@ function renderFixture(id) {
   if (!f) return '<section><p>That game doesn’t exist any more. <a href="#/fixtures">Back to fixtures</a></p></section>';
   if (state.draftSquad?.fixture !== f.id) state.draftSquad = { fixture: f.id, ids: [...f.squad] };
 
-  const squad = [...squadOf(f.league_id)].map(player).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const squad = [...squadOf(f.league_id)].map(player).filter(Boolean).sort(byFullTimeThenName);
   const groups = { available: [], unavailable: [], none: [] };
   for (const p of squad) groups[vote(f.id, p.id)?.answer ?? "none"].push(p);
   const deadline = f.replies_deadline;
@@ -295,10 +305,11 @@ function renderFixture(id) {
       <h2>Replies</h2>
       <div class="counts">
         <span class="tag yes">${groups.available.length} available</span>
+        ${state.fullTime.size ? `<span class="tag full">★ ${groups.available.filter((p) => isFullTime(p.id)).length} of them full-time</span>` : ""}
         <span class="tag no">${groups.unavailable.length} can’t play</span>
         <span class="tag">${groups.none.length} no reply</span>
       </div>
-      <p class="muted">You can set or change a reply for anyone, even after replies close. It’s recorded as set by you.</p>
+      <p class="muted">You can set or change a reply for anyone, even after replies close. It’s recorded as set by you. Full-time players are listed first; pick them ahead of part-time players.</p>
       <ul class="list">${squad.map((p) => replyRow(f, p)).join("")}</ul>
     </section>
 
@@ -314,7 +325,7 @@ function replyRow(f, p) {
   const by = v ? `${esc(dayAndTime(v.updated_at))} by ${esc(setByName(v.set_by, p.id))}` : "";
   const changed = changes.length > 1 ? ` · changed ${changes.length - 1}×` : "";
   return `<li>
-    <span class="grow"><a href="#/player/${encodeURIComponent(p.id)}">${esc(p.name)}</a><br><span class="muted" style="font-size:.85rem">${by}${changed}</span></span>
+    <span class="grow"><a href="#/player/${encodeURIComponent(p.id)}">${esc(p.name)}</a>${fullTimeTag(p.id)}<br><span class="muted" style="font-size:.85rem">${by}${changed}</span></span>
     <select data-action="set-reply" data-fixture="${esc(f.id)}" data-player="${esc(p.id)}" aria-label="Reply for ${esc(p.name)}" style="width:auto">
       <option value="" ${current === "" ? "selected" : ""}>No reply</option>
       <option value="available" ${current === "available" ? "selected" : ""}>Available</option>
@@ -329,7 +340,7 @@ function sidePicker(f, groups) {
   const picked = draft.map((id, index) => {
     const p = player(id);
     const answer = vote(f.id, id)?.answer;
-    return `<li><b style="width:1.6em">${index + 1}</b><span class="grow">${esc(p?.name ?? id)} ${answer === "available" ? "" : answerTag(answer)}</span>
+    return `<li><b style="width:1.6em">${index + 1}</b><span class="grow">${esc(p?.name ?? id)}${fullTimeTag(id)} ${answer === "available" ? "" : answerTag(answer)}</span>
       <button class="small" data-action="move" data-player="${esc(id)}" data-by="-1" ${index === 0 ? "disabled" : ""} aria-label="Move ${esc(p?.name)} up">↑</button>
       <button class="small" data-action="move" data-player="${esc(id)}" data-by="1" ${index === draft.length - 1 ? "disabled" : ""} aria-label="Move ${esc(p?.name)} down">↓</button>
       <button class="small danger" data-action="drop" data-player="${esc(id)}" aria-label="Take ${esc(p?.name)} out">✕</button></li>`;
@@ -337,7 +348,7 @@ function sidePicker(f, groups) {
   const choose = (list, label) => {
     const rest = list.filter((p) => !draft.includes(p.id));
     if (!rest.length) return "";
-    return `<h3>${label}</h3><ul class="list">${rest.map((p) => `<li><span class="grow">${esc(p.name)}</span>
+    return `<h3>${label}</h3><ul class="list">${rest.map((p) => `<li><span class="grow">${esc(p.name)}${fullTimeTag(p.id)}</span>
       <button class="small" data-action="add" data-player="${esc(p.id)}">Add</button></li>`).join("")}</ul>`;
   };
   return `<section>
@@ -375,7 +386,7 @@ function renderSquad() {
     .sort((a, b) => a.name.localeCompare(b.name));
   const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
   const row = (p, extra = "") => `<li data-name="${esc(p.name.toLocaleLowerCase())}">
-      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}<br>
+      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}${fullTimeTag(p.id)}<br>
         <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
       ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
   const where = state.league === "all" ? "the club" : esc(league(state.league)?.name);
@@ -441,6 +452,7 @@ function renderPlayerForm(p) {
       <div class="actions">
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="is_captain" ${p?.is_captain ? "checked" : ""}> Captain</label>
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="is_vice_captain" ${p?.is_vice_captain ? "checked" : ""}> Vice-captain</label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="full_time" ${p && isFullTime(p.id) ? "checked" : ""}> Full-time <span class="hint">Paid for the whole season. Only admins see this.</span></label>
       </div>
       <h3>Leagues</h3>
       <div class="actions">${leagues.map((l) => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="league" value="${esc(l.id)}" ${memberOf(l) ? "checked" : ""}> ${esc(l.name)}</label>`).join("") || '<span class="muted">No leagues yet.</span>'}</div>
@@ -1018,6 +1030,10 @@ const handlers = {
       await must(db.from("players").insert({ ...row, id }));
     }
 
+    const fullTime = values.has("full_time");
+    if (fullTime && !isFullTime(id)) await must(db.from("full_time_players").insert({ player_id: id }));
+    if (!fullTime && isFullTime(id)) await must(db.from("full_time_players").delete().eq("player_id", id));
+
     const wanted = new Set(values.getAll("league"));
     const current = new Set(state.leagues.filter((l) => squadOf(l.id).has(id)).map((l) => l.id));
     const join = [...wanted].filter((l) => !current.has(l)).map((league_id) => ({ league_id, player_id: id }));
@@ -1159,12 +1175,12 @@ async function start(session) {
       db.rpc("is_admin"), db.auth.getUser(), loadAll({ accounts: true }).catch(() => null),
     ]);
     if (sessionError) {
-      Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], accounts: null });
+      Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], fullTime: new Set(), accounts: null });
       await endSession();
       return renderSignIn();
     }
     if (error || !isAdmin) {
-      Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], accounts: null });
+      Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], fullTime: new Set(), accounts: null });
       await db.auth.signOut({ scope: "local" });
       notify("This login isn’t a club admin. Ask an owner to add you.", true);
       return renderSignIn();
