@@ -94,8 +94,16 @@ async function must(query) {
   return data;
 }
 
-async function loadAll() {
-  const [leagues, players, fixtures, votes, history, admins, logins] = await Promise.all([
+/**
+ * Loads everything the page shows, in parallel. Login emails come from the manage-logins function, which is the
+ * slowest call, so they're only fetched when asked for (on sign-in, and after a change to a login) or when the
+ * last attempt failed.
+ */
+async function loadAll({ accounts = false } = {}) {
+  const fetchAccounts = accounts || !state.accounts
+    ? callLogins({ action: "list" }).catch(() => null)
+    : Promise.resolve(state.accounts);
+  const [leagues, players, fixtures, votes, history, admins, logins, emails] = await Promise.all([
     must(db.from("leagues").select("*, league_players(player_id)").order("is_active", { ascending: false }).order("starts_on", { ascending: false })),
     must(db.from("players").select("*").order("name")),
     must(db.from("fixtures").select("*, replies_deadline, performances(*)").order("start")),
@@ -103,13 +111,9 @@ async function loadAll() {
     must(db.from("availability_history").select("*").order("changed_at")),
     must(db.from("admins").select("*")),
     must(db.from("player_logins").select("*")),
+    fetchAccounts,
   ]);
-  Object.assign(state, { leagues, players, fixtures, votes, history, admins, logins });
-  try {
-    state.accounts = await callLogins({ action: "list" });
-  } catch {
-    state.accounts = null;
-  }
+  Object.assign(state, { leagues, players, fixtures, votes, history, admins, logins, accounts: emails });
   const saved = localStorage.getItem("league");
   if (!state.league) state.league = saved === "all" || league(saved) ? saved : leagues[0]?.id ?? "all";
 }
@@ -762,8 +766,9 @@ function notify(text, error = false) {
   state.notice = { text, error };
 }
 
-async function refresh(message) {
-  await loadAll();
+/** Reloads after a change. Pass `accounts: true` when the change was to a login, so its email or status is fresh. */
+async function refresh(message, { accounts = false } = {}) {
+  await loadAll({ accounts });
   if (message) notify(message);
   render();
 }
@@ -1017,13 +1022,13 @@ const handlers = {
           : `${row.name} added. They sign in with ${email} and the passcode ${passcode}.`;
       } catch (error) {
         location.hash = `#/edit-player/${encodeURIComponent(id)}`;
-        await refresh();
+        await refresh(undefined, { accounts: true });
         notify(`${row.name} was added, but the login wasn’t: ${error.message}`, true);
         return render();
       }
     }
     location.hash = "#/squad";
-    await refresh(message);
+    await refresh(message, { accounts: Boolean(email) });
   },
   async "save-league"(form) {
     const values = new FormData(form);
@@ -1059,7 +1064,7 @@ const handlers = {
     const result = await callLogins({ action: "create", player_id: button.dataset.player, email, passcode });
     await refresh(result.linked
       ? `Linked to the existing login for ${email}. The passcode hasn’t changed.`
-      : `Login created. ${player(button.dataset.player)?.name} signs in with ${email} and the passcode ${passcode}.`);
+      : `Login created. ${player(button.dataset.player)?.name} signs in with ${email} and the passcode ${passcode}.`, { accounts: true });
   },
   async "reset-passcode"(button) {
     const passcode = button.closest("section").querySelector("[name=new_passcode]").value;
@@ -1069,7 +1074,7 @@ const handlers = {
   async "disable-login"(button) {
     if (!confirm(`Turn off ${player(button.dataset.player)?.name}’s login? They won’t be able to sign in until it’s turned back on.`)) return;
     await callLogins({ action: "disable", player_id: button.dataset.player });
-    await refresh("Login turned off.");
+    await refresh("Login turned off.", { accounts: true });
   },
   async "make-admin"(button) {
     const p = player(button.dataset.player);
@@ -1085,7 +1090,7 @@ const handlers = {
   },
   async "enable-login"(button) {
     await callLogins({ action: "enable", player_id: button.dataset.player });
-    await refresh("Login turned back on.");
+    await refresh("Login turned back on.", { accounts: true });
   },
   sort(button) {
     sortDescending = sortKey === button.dataset.key ? !sortDescending : button.dataset.key !== "name";
@@ -1125,19 +1130,34 @@ db.auth.onAuthStateChange((_event, session) => {
   setTimeout(() => run(() => start(session)), 0);
 });
 
+let starting = null;  // the sign-in being loaded, so a second auth event for the same login doesn't load it again
+
 async function start(session) {
-  if (session?.user.id === state.session?.user.id && state.leagues.length) return;
+  const userID = session?.user.id;
+  if (userID && userID === state.session?.user.id && state.leagues.length) return;
+  if (userID && starting?.userID === userID) return starting.done;
   state.session = null;
   if (!session) return renderSignIn();
-  const { data: isAdmin, error } = await db.rpc("is_admin");
-  if (error || !isAdmin) {
-    await db.auth.signOut();
-    notify("This login isn’t a club admin. Ask an owner to add you.", true);
-    return renderSignIn();
+  const done = (async () => {
+    // Check the login is an admin while the data loads, rather than first. The database's access rules decide what
+    // a non-admin could read, and their data is thrown away below.
+    const [{ data: isAdmin, error }] = await Promise.all([db.rpc("is_admin"), loadAll({ accounts: true }).catch(() => null)]);
+    if (error || !isAdmin) {
+      Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], accounts: null });
+      await db.auth.signOut();
+      notify("This login isn’t a club admin. Ask an owner to add you.", true);
+      return renderSignIn();
+    }
+    if (!state.leagues.length) await loadAll({ accounts: true });
+    state.session = session;
+    const me = state.admins.find((a) => a.user_id === session.user.id);
+    document.getElementById("whoami").textContent = `Signed in as ${me?.name ?? session.user.email}`;
+    render();
+  })();
+  starting = { userID, done };
+  try {
+    await done;
+  } finally {
+    if (starting?.done === done) starting = null;
   }
-  state.session = session;
-  await loadAll();
-  const me = state.admins.find((a) => a.user_id === session.user.id);
-  document.getElementById("whoami").textContent = `Signed in as ${me?.name ?? session.user.email}`;
-  render();
 }
