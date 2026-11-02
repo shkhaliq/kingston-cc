@@ -101,7 +101,12 @@ async function must(query) {
  */
 async function loadAll({ accounts = false } = {}) {
   const fetchAccounts = accounts || !state.accounts
-    ? callLogins({ action: "list" }).catch(() => null)
+    ? callLogins({ action: "list" }).catch((error) => {
+      // The sign-in was ended elsewhere (a global sign-out or passcode change). Database reads keep working until the
+      // token expires, but nothing that checks the session will, so sign in again rather than limp on.
+      if (error.status === 401 && state.session) endSession();
+      return null;
+    })
     : Promise.resolve(state.accounts);
   const [leagues, players, fixtures, votes, history, admins, logins, emails] = await Promise.all([
     must(db.from("leagues").select("*, league_players(player_id)").order("is_active", { ascending: false }).order("starts_on", { ascending: false })),
@@ -128,9 +133,15 @@ async function callLogins(body) {
     } catch {
       // Not a JSON reply; keep the general message.
     }
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: error.context?.status });
   }
   return data;
+}
+
+/** Signs this browser out after its session was ended on the server, and says why. */
+async function endSession() {
+  notify("Your sign-in has ended, perhaps because this login signed out on another device. Sign in again.", true);
+  await db.auth.signOut({ scope: "local" });
 }
 
 // Screens ----------------------------------------------------------------------------------------------------
@@ -792,7 +803,8 @@ const handlers = {
     }
   },
   async "sign-out"() {
-    await db.auth.signOut();
+    // Only this browser: a global sign-out would also end the same login's sessions in the apps.
+    await db.auth.signOut({ scope: "local" });
   },
   league(select) {
     state.league = select.value;
@@ -1141,10 +1153,19 @@ async function start(session) {
   const done = (async () => {
     // Check the login is an admin while the data loads, rather than first. The database's access rules decide what
     // a non-admin could read, and their data is thrown away below.
-    const [{ data: isAdmin, error }] = await Promise.all([db.rpc("is_admin"), loadAll({ accounts: true }).catch(() => null)]);
+    // getUser asks Auth whether the session still exists. The database only checks the token's signature, so a
+    // session ended elsewhere would otherwise load the page with logins quietly unavailable.
+    const [{ data: isAdmin, error }, { error: sessionError }] = await Promise.all([
+      db.rpc("is_admin"), db.auth.getUser(), loadAll({ accounts: true }).catch(() => null),
+    ]);
+    if (sessionError) {
+      Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], accounts: null });
+      await endSession();
+      return renderSignIn();
+    }
     if (error || !isAdmin) {
       Object.assign(state, { leagues: [], players: [], fixtures: [], votes: [], history: [], admins: [], logins: [], accounts: null });
-      await db.auth.signOut();
+      await db.auth.signOut({ scope: "local" });
       notify("This login isn’t a club admin. Ask an owner to add you.", true);
       return renderSignIn();
     }
