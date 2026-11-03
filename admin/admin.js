@@ -68,6 +68,10 @@ const fullTimeTag = (playerID) => (isFullTime(playerID) ? ' <span class="tag ful
 /** Full-time players first, then by name. */
 const byFullTimeThenName = (a, b) => isFullTime(b.id) - isFullTime(a.id) || a.name.localeCompare(b.name);
 const squadOf = (leagueID) => new Set(league(leagueID)?.league_players.map((m) => m.player_id) ?? []);
+/** App Review's demo player. It's in the squad so reviewers can try replying, but its replies aren't real. */
+const isTestAccount = (playerID) => player(playerID)?.is_test_account === true;
+/** The squad without App Review's demo player: who the replies, counts, side and report are about. */
+const playingSquadOf = (leagueID) => new Set([...squadOf(leagueID)].filter((id) => !isTestAccount(id)));
 const vote = (fixtureID, playerID) => state.votes.find((v) => v.fixture_id === fixtureID && v.player_id === playerID);
 
 /** Who gave a reply: the player themselves, an admin by name, or the dashboard. */
@@ -220,8 +224,8 @@ function fixtureItem(f) {
   const day = format(f.start, { weekday: "short" });
   const date = format(f.start, { day: "numeric" });
   const replies = state.votes.filter((v) => v.fixture_id === f.id);
-  const yes = replies.filter((v) => v.answer === "available").length;
-  const squad = squadOf(f.league_id).size;
+  const yes = replies.filter((v) => v.answer === "available" && !isTestAccount(v.player_id)).length;
+  const squad = playingSquadOf(f.league_id).size;
   let status = `<span class="tag">${yes} of ${squad} available</span>`;
   if (f.status !== "scheduled") status = `<span class="tag no">${f.status === "cancelled" ? "Cancelled" : "Postponed"}</span>`;
   else if (f.outcome) status = `<span class="tag">${{ won: "Won", lost: "Lost", tied: "Tied", no_result: "No result" }[f.outcome]}</span>`;
@@ -286,7 +290,7 @@ function renderFixture(id) {
   if (!f) return '<section><p>That game doesn’t exist any more. <a href="#/fixtures">Back to fixtures</a></p></section>';
   if (state.draftSquad?.fixture !== f.id) state.draftSquad = { fixture: f.id, ids: [...f.squad] };
 
-  const squad = [...squadOf(f.league_id)].map(player).filter(Boolean).sort(byFullTimeThenName);
+  const squad = [...playingSquadOf(f.league_id)].map(player).filter(Boolean).sort(byFullTimeThenName);
   const groups = { available: [], unavailable: [], none: [] };
   for (const p of squad) groups[vote(f.id, p.id)?.answer ?? "none"].push(p);
   const deadline = f.replies_deadline;
@@ -395,7 +399,7 @@ function renderSquad() {
     .sort((a, b) => a.name.localeCompare(b.name));
   const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
   const row = (p, extra = "") => `<li data-name="${esc(p.name.toLocaleLowerCase())}">
-      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}${fullTimeTag(p.id)}<br>
+      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}${fullTimeTag(p.id)}${p.is_test_account ? ' <span class="tag" title="App Review’s demo login. Its replies are left out of every count and list.">App Review test account</span>' : ""}<br>
         <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
       ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
   const where = state.league === "all" ? "the club" : esc(league(state.league)?.name);
@@ -599,7 +603,7 @@ function resultSection(f) {
   const ids = [...f.squad, ...f.performances.map((x) => x.player_id).filter((id) => !f.squad.includes(id))];
   const perfOf = (id) => f.performances.find((x) => x.player_id === id);
   const hasCard = f.performances.length > 0;
-  const others = [...squadOf(f.league_id)].filter((id) => !ids.includes(id)).map(player).filter(Boolean)
+  const others = [...playingSquadOf(f.league_id)].filter((id) => !ids.includes(id)).map(player).filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return `<section>
@@ -668,8 +672,8 @@ function renderImportReview() {
   if (!box || !imported) return;
   const f = state.fixtures.find((x) => x.id === imported.fixtureID);
   const result = teamCard(imported.card, imported.team);
-  const squad = [...squadOf(f.league_id)].map(player).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
-  const others = state.players.filter((p) => !squadOf(f.league_id).has(p.id));
+  const squad = [...playingSquadOf(f.league_id)].map(player).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const others = state.players.filter((p) => !squadOf(f.league_id).has(p.id) && !p.is_test_account);
   const choices = (selected) => `<option value="">Not one of ours, skip</option>
     <optgroup label="${esc(league(f.league_id)?.name)}">${squad.map((p) => `<option value="${esc(p.id)}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>
     ${others.length ? `<optgroup label="Other players">${others.map((p) => `<option value="${esc(p.id)}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>` : ""}`;
@@ -723,7 +727,8 @@ let sortKey = "name";
 let sortDescending = false;
 
 function renderReport() {
-  const members = state.league === "all" ? state.players : [...squadOf(state.league)].map(player).filter(Boolean);
+  const members = (state.league === "all" ? state.players : [...squadOf(state.league)].map(player).filter(Boolean))
+    .filter((p) => !p.is_test_account);
   const rows = members.map(playerRecord);
   const value = (r) => (sortKey === "name" ? r.player.name : r[sortKey] ?? -1);
   rows.sort((a, b) => {
