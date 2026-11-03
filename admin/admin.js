@@ -309,13 +309,22 @@ function renderFixture(id) {
         <span class="tag no">${groups.unavailable.length} can’t play</span>
         <span class="tag">${groups.none.length} no reply</span>
       </div>
-      <p class="muted">You can set or change a reply for anyone, even after replies close. It’s recorded as set by you. Full-time players are listed first; pick them ahead of part-time players.</p>
-      <ul class="list">${squad.map((p) => replyRow(f, p)).join("")}</ul>
+      <p class="muted">You can set or change a reply for anyone, even after replies close. It’s recorded as set by you. In each group, full-time players are listed first; pick them ahead of part-time players.</p>
+      ${replyGroup(f, "Available", "yes", groups.available)}
+      ${replyGroup(f, "Can’t play", "no", groups.unavailable)}
+      ${replyGroup(f, "No reply", "", groups.none)}
     </section>
 
     ${sidePicker(f, groups)}
 
     ${resultSection(f)}`;
+}
+
+/** One group of replies, such as everyone available, under a heading with its count. Empty groups are left out. */
+function replyGroup(f, label, tone, players) {
+  if (!players.length) return "";
+  return `<h3 class="reply-group"><span class="tag ${tone}">${esc(label)} · ${players.length}</span></h3>
+    <ul class="list">${players.map((p) => replyRow(f, p)).join("")}</ul>`;
 }
 
 function replyRow(f, p) {
