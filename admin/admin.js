@@ -355,8 +355,8 @@ function sidePicker(f, groups) {
     const p = player(id);
     const answer = vote(f.id, id)?.answer;
     const keeps = id === keeper;
-    return `<li><b style="width:1.6em">${index + 1}</b><span class="grow">${esc(p?.name ?? id)}${fullTimeTag(id)}${keeps ? ' <span class="tag yes">WK</span>' : ""} ${answer === "available" ? "" : answerTag(answer)}${p?.role === "wicket_keeper" && !keeps ? ' <span class="muted" style="font-size:.85rem">keeper</span>' : ""}</span>
-      <button class="small ${keeps ? "primary" : ""}" data-action="keeper" data-player="${esc(id)}" aria-pressed="${keeps}" aria-label="${keeps ? "Wicket-keeper" : "Make wicket-keeper"}: ${esc(p?.name)}" title="Wicket-keeper">WK</button>
+    return `<li><b style="width:1.6em">${index + 1}</b><span class="grow">${esc(p?.name ?? id)}${fullTimeTag(id)}${keeps ? ' <span class="tag yes">WK</span>' : ""} ${answer === "available" ? "" : answerTag(answer)}${p?.can_keep && !keeps ? ' <span class="muted" style="font-size:.85rem">can keep</span>' : ""}</span>
+      ${p?.can_keep || keeps ? `<button class="small ${keeps ? "primary" : ""}" data-action="keeper" data-player="${esc(id)}" aria-pressed="${keeps}" aria-label="${keeps ? "Wicket-keeper" : "Make wicket-keeper"}: ${esc(p?.name)}" title="Wicket-keeper">WK</button>` : ""}
       <button class="small" data-action="move" data-player="${esc(id)}" data-by="-1" ${index === 0 ? "disabled" : ""} aria-label="Move ${esc(p?.name)} up">↑</button>
       <button class="small" data-action="move" data-player="${esc(id)}" data-by="1" ${index === draft.length - 1 ? "disabled" : ""} aria-label="Move ${esc(p?.name)} down">↓</button>
       <button class="small danger" data-action="drop" data-player="${esc(id)}" aria-label="Take ${esc(p?.name)} out">✕</button></li>`;
@@ -369,7 +369,7 @@ function sidePicker(f, groups) {
   };
   return `<section>
     <h2>The side</h2>
-    <p class="muted">${f.squad.length ? "The side is published. Players see it in the app." : "Publishing the side closes replies and tells players whether they’re in."} ${draft.length} picked. Tap <b>WK</b> to choose this game’s wicket-keeper${draft.length && !keeper ? " (none chosen yet)" : ""}.</p>
+    <p class="muted">${f.squad.length ? "The side is published. Players see it in the app." : "Publishing the side closes replies and tells players whether they’re in."} ${draft.length} picked. ${draft.some((id) => player(id)?.can_keep) ? `Tap <b>WK</b> to choose this game’s wicket-keeper${keeper ? "" : " (none chosen yet)"}.` : draft.length ? "Nobody picked can keep wicket. Tick <b>Can keep wicket</b> on a player in the Squad screen to choose them as keeper." : ""}</p>
     <div class="columns">
       <div><h3>Batting order</h3>${draft.length ? `<ol class="list">${picked}</ol>` : '<p class="muted">Add players from the list.</p>'}</div>
       <div>${choose(groups.available, "Available")}${choose(groups.none, "No reply yet")}${choose(groups.unavailable, "Can’t play")}</div>
@@ -384,7 +384,7 @@ function sidePicker(f, groups) {
 
 // The squad and logins ---------------------------------------------------------------------------------------
 
-const ROLES = { batter: "Batter", bowler: "Bowler", all_rounder: "All-rounder", wicket_keeper: "Wicket-keeper" };
+const ROLES = { batter: "Batter", bowler: "Bowler", all_rounder: "All-rounder" };
 
 const account = (playerID) => state.accounts?.find((a) => a.player_id === playerID);
 const loginOf = (playerID) => state.logins.find((l) => l.player_id === playerID)?.user_id;
@@ -402,7 +402,7 @@ function renderSquad() {
     .sort((a, b) => a.name.localeCompare(b.name));
   const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
   const row = (p, extra = "") => `<li data-name="${esc(p.name.toLocaleLowerCase())}">
-      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}${fullTimeTag(p.id)}${p.is_test_account ? ' <span class="tag" title="App Review’s demo login. Its replies are left out of every count and list.">App Review test account</span>' : ""}<br>
+      <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${p.can_keep ? ' <span class="tag">Can keep</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}${fullTimeTag(p.id)}${p.is_test_account ? ' <span class="tag" title="App Review’s demo login. Its replies are left out of every count and list.">App Review test account</span>' : ""}<br>
         <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
       ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
   const where = state.league === "all" ? "the club" : esc(league(state.league)?.name);
@@ -468,6 +468,7 @@ function renderPlayerForm(p) {
       <div class="actions">
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="is_captain" ${p?.is_captain ? "checked" : ""}> Captain</label>
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="is_vice_captain" ${p?.is_vice_captain ? "checked" : ""}> Vice-captain</label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="can_keep" ${p?.can_keep ? "checked" : ""}> Can keep wicket <span class="hint">Any number of players. Pick each game’s keeper when you pick the side.</span></label>
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="full_time" ${p && isFullTime(p.id) ? "checked" : ""}> Full-time <span class="hint">Paid for the whole season. Only admins see this.</span></label>
       </div>
       <h3>Leagues</h3>
@@ -1040,6 +1041,7 @@ const handlers = {
       bowling_style: values.get("bowling_style").trim(),
       is_captain: values.has("is_captain"),
       is_vice_captain: values.has("is_vice_captain"),
+      can_keep: values.has("can_keep"),
     };
     const email = values.get("email")?.trim();
     const passcode = values.get("passcode") ?? "";
