@@ -288,7 +288,7 @@ function renderFixtureForm(fixture) {
 function renderFixture(id) {
   const f = state.fixtures.find((x) => x.id === id);
   if (!f) return '<section><p>That game doesn’t exist any more. <a href="#/fixtures">Back to fixtures</a></p></section>';
-  if (state.draftSquad?.fixture !== f.id) state.draftSquad = { fixture: f.id, ids: [...f.squad] };
+  if (state.draftSquad?.fixture !== f.id) state.draftSquad = { fixture: f.id, ids: [...f.squad], keeper: f.wicket_keeper ?? null };
 
   const squad = [...playingSquadOf(f.league_id)].map(player).filter(Boolean).sort(byFullTimeThenName);
   const groups = { available: [], unavailable: [], none: [] };
@@ -349,11 +349,14 @@ function replyRow(f, p) {
 
 function sidePicker(f, groups) {
   const draft = state.draftSquad.ids;
-  const changed = draft.join() !== f.squad.join();
+  const keeper = state.draftSquad.keeper;
+  const changed = draft.join() !== f.squad.join() || keeper !== (f.wicket_keeper ?? null);
   const picked = draft.map((id, index) => {
     const p = player(id);
     const answer = vote(f.id, id)?.answer;
-    return `<li><b style="width:1.6em">${index + 1}</b><span class="grow">${esc(p?.name ?? id)}${fullTimeTag(id)} ${answer === "available" ? "" : answerTag(answer)}</span>
+    const keeps = id === keeper;
+    return `<li><b style="width:1.6em">${index + 1}</b><span class="grow">${esc(p?.name ?? id)}${fullTimeTag(id)}${keeps ? ' <span class="tag yes">WK</span>' : ""} ${answer === "available" ? "" : answerTag(answer)}${p?.role === "wicket_keeper" && !keeps ? ' <span class="muted" style="font-size:.85rem">keeper</span>' : ""}</span>
+      <button class="small ${keeps ? "primary" : ""}" data-action="keeper" data-player="${esc(id)}" aria-pressed="${keeps}" aria-label="${keeps ? "Wicket-keeper" : "Make wicket-keeper"}: ${esc(p?.name)}" title="Wicket-keeper">WK</button>
       <button class="small" data-action="move" data-player="${esc(id)}" data-by="-1" ${index === 0 ? "disabled" : ""} aria-label="Move ${esc(p?.name)} up">↑</button>
       <button class="small" data-action="move" data-player="${esc(id)}" data-by="1" ${index === draft.length - 1 ? "disabled" : ""} aria-label="Move ${esc(p?.name)} down">↓</button>
       <button class="small danger" data-action="drop" data-player="${esc(id)}" aria-label="Take ${esc(p?.name)} out">✕</button></li>`;
@@ -366,7 +369,7 @@ function sidePicker(f, groups) {
   };
   return `<section>
     <h2>The side</h2>
-    <p class="muted">${f.squad.length ? "The side is published. Players see it in the app." : "Publishing the side closes replies and tells players whether they’re in."} ${draft.length} picked.</p>
+    <p class="muted">${f.squad.length ? "The side is published. Players see it in the app." : "Publishing the side closes replies and tells players whether they’re in."} ${draft.length} picked. Tap <b>WK</b> to choose this game’s wicket-keeper${draft.length && !keeper ? " (none chosen yet)" : ""}.</p>
     <div class="columns">
       <div><h3>Batting order</h3>${draft.length ? `<ol class="list">${picked}</ol>` : '<p class="muted">Add players from the list.</p>'}</div>
       <div>${choose(groups.available, "Available")}${choose(groups.none, "No reply yet")}${choose(groups.unavailable, "Can’t play")}</div>
@@ -876,6 +879,12 @@ const handlers = {
   },
   drop(button) {
     state.draftSquad.ids = state.draftSquad.ids.filter((id) => id !== button.dataset.player);
+    if (state.draftSquad.keeper === button.dataset.player) state.draftSquad.keeper = null;
+    render();
+  },
+  keeper(button) {
+    const id = button.dataset.player;
+    state.draftSquad.keeper = state.draftSquad.keeper === id ? null : id;
     render();
   },
   move(button) {
@@ -890,7 +899,7 @@ const handlers = {
     render();
   },
   async "publish-side"(button) {
-    await must(db.from("fixtures").update({ squad: state.draftSquad.ids }).eq("id", button.dataset.fixture));
+    await must(db.from("fixtures").update({ squad: state.draftSquad.ids, wicket_keeper: state.draftSquad.keeper }).eq("id", button.dataset.fixture));
     await refresh("Side published.");
   },
   async "save-result"(form) {
@@ -1018,7 +1027,7 @@ const handlers = {
   },
   async "clear-side"(button) {
     if (!confirm("Unpublish the side? If replies haven’t closed yet, players can reply again.")) return;
-    await must(db.from("fixtures").update({ squad: [] }).eq("id", button.dataset.fixture));
+    await must(db.from("fixtures").update({ squad: [], wicket_keeper: null }).eq("id", button.dataset.fixture));
     state.draftSquad = null;
     await refresh("Side unpublished.");
   },
