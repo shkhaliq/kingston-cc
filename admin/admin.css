@@ -130,3 +130,21 @@ details.import summary { cursor: pointer; font-weight: 700; }
 
 .signin { max-width: 420px; }
 .loading { padding: 24px 4px; }
+
+/* Player photos */
+.avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: .85rem;
+}
+.photo-edit { display: flex; gap: 16px; align-items: flex-start; }
+.photo-edit .avatar { width: 72px; height: 72px; font-size: 1.2rem; }

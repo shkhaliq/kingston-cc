@@ -61,6 +61,15 @@ const answerTag = (answer) => ({
 // Lookups ----------------------------------------------------------------------------------------------------
 
 const player = (id) => state.players.find((p) => p.id === id);
+
+/** Where a player's photo is, or null if they haven't got one. The time on the end beats the browser's cache. */
+const photoURL = (p) => p?.photo_updated_at
+  ? `${SUPABASE_URL}/storage/v1/object/public/player-photos/${encodeURIComponent(p.id)}.jpg?v=${Math.floor(Date.parse(p.photo_updated_at) / 1000)}`
+  : null;
+/** A player's photo as a small circle, or their initials until they've got one. */
+const avatar = (p) => photoURL(p)
+  ? `<img class="avatar" src="${esc(photoURL(p))}" alt="" width="40" height="40">`
+  : `<span class="avatar" aria-hidden="true">${esc(p.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join(""))}</span>`;
 const league = (id) => state.leagues.find((l) => l.id === id);
 const isFullTime = (playerID) => state.fullTime.has(playerID);
 /** A "Full-time" tag for players who paid for the whole season. Only admins can read who's full-time. */
@@ -402,6 +411,7 @@ function renderSquad() {
     .sort((a, b) => a.name.localeCompare(b.name));
   const others = state.league === "all" ? [] : state.players.filter((p) => !squadOf(state.league).has(p.id));
   const row = (p, extra = "") => `<li data-name="${esc(p.name.toLocaleLowerCase())}">
+      ${avatar(p)}
       <span class="grow"><b>${esc(p.name)}</b>${p.is_captain ? ' <span class="tag">Captain</span>' : ""}${p.is_vice_captain ? ' <span class="tag">Vice-captain</span>' : ""}${p.can_keep ? ' <span class="tag">Can keep</span>' : ""}${isAdmin(p.id) ? ' <span class="tag">Admin</span>' : ""}${fullTimeTag(p.id)}${p.is_test_account ? ' <span class="tag" title="App Review’s demo login. Its replies are left out of every count and list.">App Review test account</span>' : ""}<br>
         <span class="muted">${esc(ROLES[p.role] ?? p.role)}</span> ${loginTag(p)}</span>
       ${extra}<a class="button small" href="#/edit-player/${encodeURIComponent(p.id)}">Edit</a></li>`;
@@ -480,7 +490,43 @@ function renderPlayerForm(p) {
       </div>
     </form>
   </section>
+  ${p ? photoSection(p) : ""}
   ${p ? `<section><h2>Login</h2>${login}</section>` : ""}`;
+}
+
+/** Add, replace or remove a player's photo. The picture is shrunk here before it's uploaded. */
+function photoSection(p) {
+  return `<section>
+    <h2>Photo</h2>
+    <div class="photo-edit">
+      ${avatar(p)}
+      <div>
+        <label>Choose a picture <span class="hint">JPEG or PNG. It’s shrunk before it’s uploaded.</span>
+          <input name="photo" type="file" accept="image/jpeg,image/png"></label>
+        <div class="actions">
+          <button type="button" data-action="upload-photo" data-player="${esc(p.id)}">${photoURL(p) ? "Replace photo" : "Upload photo"}</button>
+          ${photoURL(p) ? `<button type="button" class="danger" data-action="remove-photo" data-player="${esc(p.id)}">Remove photo</button>` : ""}
+        </div>
+      </div>
+    </div>
+    <p class="muted">Players can also change their own from their stats page in the app.</p>
+  </section>`;
+}
+
+const PHOTO_SIDE = 800;
+
+/** The picture as a JPEG no bigger than PHOTO_SIDE on its longest side, turned upright the way it was taken. */
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const scale = Math.min(1, PHOTO_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
+  if (!blob) throw new Error("That picture couldn’t be read. Try another one.");
+  return blob;
 }
 
 /** Owners are admins: they can use this page. An admin can't remove themselves. */
@@ -1140,6 +1186,22 @@ const handlers = {
     if (!confirm(`Remove ${p.name} as a club admin? Their app login keeps working.`)) return;
     await must(db.from("admins").delete().eq("user_id", loginOf(p.id)));
     await refresh(`${p.name} is no longer a club admin.`);
+  },
+  async "upload-photo"(button) {
+    const p = player(button.dataset.player);
+    const file = button.closest("section").querySelector("[name=photo]").files[0];
+    if (!file) throw new Error("Choose a picture first.");
+    const { error } = await db.storage.from("player-photos")
+      .upload(`${p.id}.jpg`, await shrinkPhoto(file), { upsert: true, contentType: "image/jpeg" });
+    if (error) throw error;
+    await refresh(`${p.name}’s photo is saved.`);
+  },
+  async "remove-photo"(button) {
+    const p = player(button.dataset.player);
+    if (!confirm(`Remove ${p.name}’s photo? Their initials show instead.`)) return;
+    const { error } = await db.storage.from("player-photos").remove([`${p.id}.jpg`]);
+    if (error) throw error;
+    await refresh(`${p.name}’s photo is removed.`);
   },
   async "enable-login"(button) {
     await callLogins({ action: "enable", player_id: button.dataset.player });
