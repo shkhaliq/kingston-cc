@@ -138,6 +138,7 @@ details.import summary { cursor: pointer; font-weight: 700; }
   height: 40px;
   border-radius: 50%;
   object-fit: cover;
+  object-position: top;
   display: inline-flex;
   align-items: center;
   justify-content: center;
