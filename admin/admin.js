@@ -674,6 +674,11 @@ function resultSection(f) {
         </select></label>
         <label>Kingston score <input name="kingston_score" placeholder="148/6 (20)" value="${esc(f.kingston_score)}"></label>
         <label>${esc(f.opponent)} score <input name="opposition_score" placeholder="131/9 (20)" value="${esc(f.opposition_score)}"></label>
+        <label>Who batted first <span class="hint">So a last-ball chase reads as a win by wickets</span><select name="batted_first">
+          <option value="" ${f.kingston_batted_first == null ? "selected" : ""}>Not recorded</option>
+          <option value="kingston" ${f.kingston_batted_first === true ? "selected" : ""}>Kingston</option>
+          <option value="opposition" ${f.kingston_batted_first === false ? "selected" : ""}>${esc(f.opponent)}</option>
+        </select></label>
         <label>Player of the match <select name="player_of_the_match">
           <option value="">None</option>
           ${ids.map(player).filter(Boolean).map((p) => `<option value="${esc(p.id)}" ${f.player_of_the_match === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
@@ -984,6 +989,7 @@ const handlers = {
       outcome: values.get("outcome"),
       kingston_score: values.get("kingston_score").trim(),
       opposition_score: values.get("opposition_score").trim(),
+      kingston_batted_first: { kingston: true, opposition: false }[values.get("batted_first")] ?? null,
       summary: values.get("summary").trim(),
       player_of_the_match: values.get("player_of_the_match") || null,
     }).eq("id", fixtureID));
@@ -1035,6 +1041,7 @@ const handlers = {
     form.outcome.value = result.outcome ?? "";
     form.kingston_score.value = result.kingstonScore;
     form.opposition_score.value = result.oppositionScore;
+    form.batted_first.value = result.kingstonBattedFirst ? "kingston" : "opposition";
 
     const tbody = form.querySelector("tbody");
     const addSelect = form.querySelector("[data-action=add-score-row]");
@@ -1068,7 +1075,7 @@ const handlers = {
   async "clear-result"(button) {
     if (!confirm("Remove the result and scorecard? The game will no longer count in the stats.")) return;
     const id = button.dataset.fixture;
-    await must(db.from("fixtures").update({ outcome: null, kingston_score: "", opposition_score: "", summary: "", player_of_the_match: null }).eq("id", id));
+    await must(db.from("fixtures").update({ outcome: null, kingston_score: "", opposition_score: "", kingston_batted_first: null, summary: "", player_of_the_match: null }).eq("id", id));
     await must(db.from("performances").delete().eq("fixture_id", id));
     await refresh("Result removed.");
   },

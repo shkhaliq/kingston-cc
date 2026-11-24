@@ -119,6 +119,8 @@ export function teamCard(card, team) {
     kingstonScore: appScore(ours.total),
     oppositionScore: appScore(theirs.total),
     opponent: theirs.team,
+    // CricClubs lists the innings in the order they were batted.
+    kingstonBattedFirst: card.innings[0].team === team,
     players: [...players.values()],
     unmatchedCatches,
   };
